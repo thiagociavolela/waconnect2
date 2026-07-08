@@ -1,0 +1,650 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WaConnect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+    crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+  <link href="assets/css/css-manager.css" rel="stylesheet" crossorigin="anonymous">
+  <link rel="icon" type="image/png" href="favicon.png" />
+</head>
+
+<body>
+  <div id="app-loader" class="app-loader hidden">
+    <div class="spinner-dot"></div>
+  </div>
+  <!-- APP -->
+  <div id="app-screen">
+    <div class="dashboard-shell">
+      <aside class="dashboard-toolbar animate" aria-label="Ferramentas do dashboard">
+        <div class="toolbar-section">
+          <a href="/index.html" class="toolbar-brand active" aria-label="Dashboard WaConnect">
+            <img src="/favicon.png" alt="WaConnect">
+          </a>
+          <a class="toolbar-icon-btn active" href="#" id="nav-dashboard" title="Dashboard" aria-label="Dashboard">
+            <i class="bi bi-speedometer2"></i>
+          </a>
+          <a class="toolbar-icon-btn" href="/attendance.html" id="nav-attendance" title="Atendimento" aria-label="Atendimento">
+            <i class="bi bi-headset"></i>
+          </a>
+          <a class="toolbar-icon-btn" href="/schedules.html" id="nav-campaigns" title="Campanhas" aria-label="Campanhas">
+            <i class="bi bi-megaphone-fill"></i>
+          </a>
+          <a class="toolbar-icon-btn" href="#instancia" title="Instância" aria-label="Instância">
+            <i class="bi bi-phone"></i>
+          </a>
+          <a class="toolbar-icon-btn" href="/api-docs" target="_blank" rel="noopener" title="API Docs" aria-label="API Docs">
+            <i class="bi bi-code-slash"></i>
+          </a>
+        </div>
+
+        <div class="toolbar-divider"></div>
+
+        <div class="toolbar-section">
+          <a class="toolbar-icon-btn" href="#stats-panel" title="Estatísticas da API" aria-label="Estatísticas da API">
+            <i class="bi bi-bar-chart-line"></i>
+          </a>
+          <a class="toolbar-icon-btn" href="#schedule-stats-panel" title="Estatísticas do agendamento" aria-label="Estatísticas do agendamento">
+            <i class="bi bi-alarm"></i>
+          </a>
+        </div>
+
+        <div class="toolbar-divider"></div>
+
+        <div class="toolbar-section">
+          <button type="button" class="toolbar-icon-btn accent" id="toolbar-generate-qr-btn" title="Gerar QR Code" aria-label="Gerar QR Code">
+            <i class="bi bi-qr-code-scan"></i>
+          </button>
+        </div>
+
+        <div class="toolbar-spacer"></div>
+
+        <div class="toolbar-section">
+          <button type="button" class="toolbar-icon-btn" id="toolbar-about-btn" title="Sobre o projeto" aria-label="Sobre o projeto">
+            <i class="bi bi-info-circle"></i>
+          </button>
+          <a class="toolbar-icon-btn" href="https://github.com/thiagociavolela/waconnect" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">
+            <i class="bi bi-github"></i>
+          </a>
+          <button type="button" class="toolbar-profile-btn" id="logout-btn" title="Sair" aria-label="Sair">
+            <img src="/favicon.png" alt="Perfil WaConnect">
+          </button>
+        </div>
+      </aside>
+
+      <main class="dashboard-main p-4">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <div>
+            <h3 class="fw-bold">Gerenciamento de Instância</h3>
+          </div>
+          <div class="d-flex align-items-center gap-3">
+            <div class="d-flex align-items-center gap-2">
+              <span class="status-badge status-connected" id="status-pill-top">ONLINE</span>
+              <img class="avatar" id="me-avatar" src="https://i.pravatar.cc/120?img=15" alt="avatar">
+            </div>
+          </div>
+        </div>
+
+        <div class="card-panel mb-4 animate" id="instancia">
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <div class="status-badge status-waiting" id="status-pill">AGUARDANDO QR</div>
+            <div class="pill-online d-flex align-items-center gap-2 px-3" id="connected-info" style="height:38px;">
+              <img id="connected-avatar" src="https://i.pravatar.cc/80?img=15" alt="avatar conectado"
+                style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid var(--border);">
+              <span id="connected-name">Não conectado</span>
+            </div>
+            <button class="btn btn-primary btn-sm" id="refresh"><i class="bi bi-qr-code me-1"></i> Gerar QR
+              Code</button>
+            <button class="btn btn-outline-secondary btn-sm" id="disconnect"><i class="bi bi-plug me-1"></i>
+              Desconectar</button>
+            <button class="btn btn-outline-secondary btn-sm" id="clear-cache"><i class="bi bi-eraser me-1"></i> Limpar
+              cache</button>
+          </div>
+        </div>
+
+        <section class="card-panel mb-4 animate" id="stats-panel">
+          <div class="stats-header">
+            <div>
+              <h5 class="mb-1 fw-bold">Estatísticas da API</h5>
+              <div class="stats-note" id="stats-note">Resumo consolidado dos endpoints operacionais da API.</div>
+            </div>
+            <div class="stats-filters" role="group" aria-label="Filtro de período">
+              <button class="btn btn-ghost btn-sm active" data-period-filter="today">Hoje</button>
+              <button class="btn btn-ghost btn-sm" data-period-filter="7d">7 dias</button>
+              <button class="btn btn-ghost btn-sm" data-period-filter="30d">30 dias</button>
+              <button class="btn btn-ghost btn-sm" data-period-filter="all">Tudo</button>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Total</div>
+              <div class="stat-value" id="stat-total">0</div>
+              <div class="stat-meta">Total de requisições processadas</div>
+            </div>
+            <div class="stat-card stat-success">
+              <div class="stat-label">Sucesso</div>
+              <div class="stat-value" id="stat-sent">0</div>
+              <div class="stat-meta">Chamadas concluídas com retorno 2xx/3xx</div>
+            </div>
+            <div class="stat-card stat-warning">
+              <div class="stat-label">Cliente</div>
+              <div class="stat-value" id="stat-pending">0</div>
+              <div class="stat-meta">Erros de validação ou uso da API</div>
+            </div>
+            <div class="stat-card stat-info">
+              <div class="stat-label">Endpoints</div>
+              <div class="stat-value" id="stat-processing">0</div>
+              <div class="stat-meta">Rotas monitoradas no painel</div>
+            </div>
+            <div class="stat-card stat-danger">
+              <div class="stat-label">Servidor</div>
+              <div class="stat-value" id="stat-failed">0</div>
+              <div class="stat-meta">Falhas internas com retorno 5xx</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Última</div>
+              <div class="stat-value" id="stat-sent-today">0</div>
+              <div class="stat-meta">Última atividade registrada</div>
+            </div>
+          </div>
+          <div class="table-responsive mt-4 stats-table-wrap">
+            <table class="table align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Endpoint</th>
+                  <th>Total</th>
+                  <th>Sucesso</th>
+                  <th>Cliente</th>
+                  <th>Servidor</th>
+                  <th>Última atividade</th>
+                </tr>
+              </thead>
+              <tbody id="endpoint-stats-body">
+                <tr>
+                  <td colspan="6" class="text-center text-muted py-3">Carregando estatísticas...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card-panel mb-4 animate" id="schedule-stats-panel">
+          <div class="stats-header">
+            <div>
+              <h5 class="mb-1 fw-bold">Estatísticas do Agendamento</h5>
+              <div class="stats-note" id="schedule-stats-note">Resumo do módulo de agendamento e processamento de mensagens.</div>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Total</div>
+              <div class="stat-value" id="schedule-stat-total">0</div>
+              <div class="stat-meta">Todos os agendamentos registrados</div>
+            </div>
+            <div class="stat-card stat-success">
+              <div class="stat-label">Enviadas</div>
+              <div class="stat-value" id="schedule-stat-sent">0</div>
+              <div class="stat-meta">Mensagens concluídas com sucesso</div>
+            </div>
+            <div class="stat-card stat-warning">
+              <div class="stat-label">Pendentes</div>
+              <div class="stat-value" id="schedule-stat-pending">0</div>
+              <div class="stat-meta">Aguardando horário de execução</div>
+            </div>
+            <div class="stat-card stat-info">
+              <div class="stat-label">Processando</div>
+              <div class="stat-value" id="schedule-stat-processing">0</div>
+              <div class="stat-meta">Atualmente em fila de envio</div>
+            </div>
+            <div class="stat-card stat-danger">
+              <div class="stat-label">Falhas</div>
+              <div class="stat-value" id="schedule-stat-failed">0</div>
+              <div class="stat-meta">Erros após tentativas do worker</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Hoje</div>
+              <div class="stat-value" id="schedule-stat-today">0</div>
+              <div class="stat-meta">Mensagens enviadas hoje</div>
+            </div>
+          </div>
+        </section>
+
+        <footer class="py-3 mt-4 footer-area border-top">
+          <div class="container">
+            <div class="d-flex flex-column flex-md-row justify-content-md-end align-items-center gap-2 text-end">
+              <a class="btn btn-ghost btn-sm px-3" href="/api-docs" target="_blank" rel="noopener">
+                <i class="bi bi-journal-code me-1"></i> API Docs
+              </a>
+              <a class="btn btn-ghost btn-sm px-3" href="#" id="footer-about">
+                <i class="bi bi-info-circle me-1"></i> Sobre Nós
+              </a>
+              <a class="btn btn-ghost btn-sm px-3" href="https://github.com/thiagociavolela/waconnect" target="_blank" rel="noopener">
+                <i class="bi bi-github me-1"></i> GitHub
+              </a>
+              <a class="btn btn-ghost btn-sm px-3" href="#" target="_blank"
+                rel="noopener">
+                <i class="bi bi-cup-hot me-1"></i> Doação
+              </a>
+            </div>
+          </div>
+        </footer>
+      </main>
+    </div>
+  </div>
+
+  <!-- MODAL QR -->
+  <div class="modal fade" id="qrModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content themed-modal">
+        <div class="modal-header">
+          <h5 class="modal-title">Escaneie o QR Code</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body d-flex justify-content-center">
+          <img id="qr" alt="QR Code" class="img-fluid" style="max-width:360px;" />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+          <button type="button" class="btn btn-primary" id="refresh-modal">Gerar novo QR</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL SOBRE -->
+  <div class="modal fade" id="aboutModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content themed-modal">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-info-circle me-2"></i>Sobre Nós</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">Somos a equipe da CursoDev e desenvolvemos o WaConnect para facilitar a gestão do WhatsApp Business: envio de mensagens, mídia, QR e automações com segurança.</p>
+          <p class="mb-0">Nosso foco é estabilidade, rapidez e evitar bloqueios, integrando processos do dia a dia com uma interface simples e pronta para uso.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-bs-dismiss="modal">Fechar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+    crossorigin="anonymous"></script>
+  <script>
+    // Elementos
+    const appScreen = document.getElementById('app-screen');
+
+    const statusPill = document.getElementById('status-pill');
+    const connectedName = document.getElementById('connected-name');
+    const refreshBtn = document.getElementById('refresh');
+    const refreshModalBtn = document.getElementById('refresh-modal');
+    const disconnectBtn = document.getElementById('disconnect');
+    const clearCacheBtn = document.getElementById('clear-cache');
+    const logoutBtn = document.getElementById('logout-btn');
+    const toolbarGenerateQrBtn = document.getElementById('toolbar-generate-qr-btn');
+    const toolbarAboutBtn = document.getElementById('toolbar-about-btn');
+    const apiDocsBtn = document.getElementById('api-docs-btn');
+    const statsNote = document.getElementById('stats-note');
+    const statTotal = document.getElementById('stat-total');
+    const statSent = document.getElementById('stat-sent');
+    const statPending = document.getElementById('stat-pending');
+    const statProcessing = document.getElementById('stat-processing');
+    const statFailed = document.getElementById('stat-failed');
+    const statSentToday = document.getElementById('stat-sent-today');
+    const endpointStatsBody = document.getElementById('endpoint-stats-body');
+    const statsFilterButtons = Array.from(document.querySelectorAll('[data-period-filter]'));
+    const scheduleStatsNote = document.getElementById('schedule-stats-note');
+    const scheduleStatTotal = document.getElementById('schedule-stat-total');
+    const scheduleStatSent = document.getElementById('schedule-stat-sent');
+    const scheduleStatPending = document.getElementById('schedule-stat-pending');
+    const scheduleStatProcessing = document.getElementById('schedule-stat-processing');
+    const scheduleStatFailed = document.getElementById('schedule-stat-failed');
+    const scheduleStatToday = document.getElementById('schedule-stat-today');
+
+    const qrModal = new bootstrap.Modal(document.getElementById('qrModal'));
+    const qrImg = document.getElementById('qr');
+    const logBox = document.getElementById('log-box');
+    const instancesTable = document.getElementById('instances-table');
+    const loader = document.getElementById('app-loader');
+    const animatables = document.querySelectorAll('.animate');
+    const aboutModal = new bootstrap.Modal(document.getElementById('aboutModal'));
+
+    const LOGIN_PAGE = '/login.html';
+    let pollInterval = null;
+    let lastConnected = null;
+    let lastQr = null;
+    let currentStatsPeriod = 'today';
+    const allowedEndpointPaths = new Set([
+      'POST /api/check-number',
+      'POST /api/send/text',
+      'POST /api/send/media',
+      'POST /api/send/contact',
+      'POST /api/attendance/conversations/:id/reply'
+    ]);
+    function renderInstances() {
+      if (!instancesTable) return;
+      const items = [];
+      instancesTable.innerHTML = items.length
+        ? items.map((item, idx) => `
+            <tr>
+              <td>${idx + 1}</td>
+              <td class="fw-bold text-uppercase">${item.name}</td>
+              <td>${item.number}</td>
+              <td>${renderStatus(item.status)}</td>
+              <td class="text-end"><button class="btn btn-ghost btn-sm" onclick="openQrFromTable()"><i class="bi bi-qr-code"></i> Gerar QR</button></td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="5" class="text-center text-muted py-3">Nenhuma instância cadastrada</td></tr>`;
+    }
+
+    function renderStatus(text) {
+      let cls = 'status-connected';
+      if (text.includes('AGUARDANDO')) cls = 'status-waiting';
+      if (text.includes('DESCONECTADA')) cls = 'status-disconnected';
+      return `<span class="status-badge ${cls}">${text}</span>`;
+    }
+
+    window.openQrFromTable = function () {
+      if (lastQr) qrModal.show();
+      else addLog('Nenhum QR disponível ainda.');
+    }
+
+    apiDocsBtn?.addEventListener('click', (ev) => { ev.preventDefault(); window.open('/api-docs', '_blank'); });
+    document.getElementById('footer-about')?.addEventListener('click', (ev) => { ev.preventDefault(); aboutModal.show(); });
+    statsFilterButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        currentStatsPeriod = button.getAttribute('data-period-filter') || 'today';
+        statsFilterButtons.forEach((item) => item.classList.remove('active'));
+        button.classList.add('active');
+        loadEndpointStats(true);
+      });
+    });
+
+    function showConnectedWarning() {
+      const msg = 'Instância conectada. Não é necessário gerar novo QR.';
+      addLog(msg);
+      alert(msg);
+    }
+
+    function handleGenerateQrClick() {
+      if (lastConnected) {
+        showConnectedWarning();
+        return;
+      }
+      addLog('Solicitando novo QR');
+      if (lastQr) {
+        qrImg.src = lastQr;
+      }
+      qrModal.show();
+      loadQR(true);
+    }
+
+    refreshBtn.addEventListener('click', handleGenerateQrClick);
+    refreshModalBtn.addEventListener('click', handleGenerateQrClick);
+    toolbarGenerateQrBtn?.addEventListener('click', handleGenerateQrClick);
+    toolbarAboutBtn?.addEventListener('click', () => aboutModal.show());
+
+    disconnectBtn.addEventListener('click', async () => {
+      const res = await fetch('/api/disconnect', { method: 'POST' });
+      if (res.status === 401) { stopPolling(); redirectToLogin(); return; }
+      addLog('Instância desconectada.');
+      loadQR(true);
+    });
+
+    clearCacheBtn.addEventListener('click', async () => {
+      const res = await fetch('/api/clear-cache', { method: 'POST' });
+      if (res.status === 401) { stopPolling(); redirectToLogin(); return; }
+      addLog('Cache limpo.');
+      loadQR(true);
+    });
+
+    logoutBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/logout', { method: 'POST' });
+      } finally {
+        stopPolling();
+        redirectToLogin();
+      }
+    });
+
+    function redirectToLogin() { window.location.href = LOGIN_PAGE; }
+
+    async function ensureAuthAndStart() {
+      try {
+        const res = await fetch('/api/status');
+        if (res.status === 401) { redirectToLogin(); return; }
+        renderInstances();
+        showLoader();
+        startPolling();
+        loadQR(true);
+        loadEndpointStats(true);
+        loadScheduleStats(true);
+      } catch { redirectToLogin(); }
+    }
+
+    function addLog(msg) {
+      const line = `[${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}] ${msg}`;
+      console.log(line);
+      if (!logBox) return;
+      logBox.textContent = (logBox.textContent + '\n' + line).trim();
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function startPolling() {
+      if (pollInterval) return;
+      pollInterval = setInterval(() => {
+        loadQR(false);
+        loadEndpointStats(false);
+        loadScheduleStats(false);
+      }, 3500);
+    }
+
+    function stopPolling() {
+      if (!pollInterval) return;
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+
+    function showLoader() { loader?.classList.remove('hidden'); }
+    function hideLoader() { loader?.classList.add('hidden'); }
+
+    function getAllowedEndpoints(endpoints) {
+      return (Array.isArray(endpoints) ? endpoints : []).filter((item) => {
+        return allowedEndpointPaths.has(`${item.method} ${item.path}`);
+      });
+    }
+
+    function getFilteredStats(stats) {
+      const endpoints = getAllowedEndpoints(stats?.endpoints);
+      const lastActivityAt = endpoints
+        .map((item) => item.lastCalledAt)
+        .filter(Boolean)
+        .sort()
+        .at(-1) || null;
+
+      return {
+        endpoints,
+        totalRequests: endpoints.reduce((sum, item) => sum + Number(item.total ?? 0), 0),
+        totalSuccess: endpoints.reduce((sum, item) => sum + Number(item.success ?? 0), 0),
+        totalClientError: endpoints.reduce((sum, item) => sum + Number(item.clientError ?? 0), 0),
+        totalServerError: endpoints.reduce((sum, item) => sum + Number(item.serverError ?? 0), 0),
+        lastActivityAt
+      };
+    }
+
+    function setStatsValues(stats) {
+      statTotal.textContent = String(stats.totalRequests ?? 0);
+      statSent.textContent = String(stats.totalSuccess ?? 0);
+      statPending.textContent = String(stats.totalClientError ?? 0);
+      statProcessing.textContent = String((stats.endpoints || []).length);
+      statFailed.textContent = String(stats.totalServerError ?? 0);
+      statSentToday.textContent = stats.lastActivityAt ? formatStatsDate(stats.lastActivityAt) : '--';
+    }
+
+    function formatStatsDate(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '--';
+      return new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }).format(date);
+    }
+
+    function renderEndpointRows(endpoints) {
+      if (!Array.isArray(endpoints) || !endpoints.length) {
+        endpointStatsBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Nenhuma estatística disponível ainda.</td></tr>';
+        return;
+      }
+
+      endpointStatsBody.innerHTML = endpoints.map((item) => `
+        <tr>
+          <td>
+            <div class="fw-bold">${item.method} ${item.path}</div>
+            <small class="text-muted">${item.label}</small>
+          </td>
+          <td>${item.total ?? 0}</td>
+          <td class="text-success">${item.success ?? 0}</td>
+          <td class="text-warning">${item.clientError ?? 0}</td>
+          <td class="text-danger">${item.serverError ?? 0}</td>
+          <td>${item.lastCalledAt ? formatStatsDate(item.lastCalledAt) : '--'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function setScheduleStatsValues(stats) {
+      scheduleStatTotal.textContent = String(stats.total ?? 0);
+      scheduleStatSent.textContent = String(stats.sent ?? 0);
+      scheduleStatPending.textContent = String(stats.pending ?? 0);
+      scheduleStatProcessing.textContent = String(stats.processing ?? 0);
+      scheduleStatFailed.textContent = String(stats.failed ?? 0);
+      scheduleStatToday.textContent = String(stats.sentToday ?? 0);
+    }
+
+    function getPeriodLabel(period) {
+      if (period === 'today') return 'Hoje';
+      if (period === '7d') return 'Últimos 7 dias';
+      if (period === '30d') return 'Últimos 30 dias';
+      return 'Todo o período';
+    }
+
+    async function loadEndpointStats(forceNote = false) {
+      try {
+        const res = await fetch(`/api/stats/endpoints?period=${encodeURIComponent(currentStatsPeriod)}`);
+        if (res.status === 401) { stopPolling(); redirectToLogin(); return; }
+        const data = await res.json();
+        const filteredStats = getFilteredStats(data);
+        setStatsValues(filteredStats);
+        renderEndpointRows(filteredStats.endpoints);
+        statsNote.textContent = `${getPeriodLabel(data.period || currentStatsPeriod)} no fuso ${data.timezone || 'America/Sao_Paulo'}.`;
+      } catch (err) {
+        if (forceNote) {
+          statsNote.textContent = 'Falha ao carregar estatísticas da API.';
+          endpointStatsBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Falha ao carregar estatísticas.</td></tr>';
+        }
+        console.error(err);
+      }
+    }
+
+    async function loadScheduleStats(forceNote = false) {
+      try {
+        const res = await fetch('/api/schedules/stats');
+        if (res.status === 401) { stopPolling(); redirectToLogin(); return; }
+        if (res.status === 503) {
+          if (forceNote) {
+            scheduleStatsNote.textContent = 'Módulo de agendamento desabilitado. Ative SCHED_DB_ENABLED para liberar esta visão.';
+          }
+          setScheduleStatsValues({ total: 0, sent: 0, pending: 0, processing: 0, failed: 0, sentToday: 0 });
+          return;
+        }
+
+        const data = await res.json();
+        setScheduleStatsValues(data);
+        scheduleStatsNote.textContent = `Atualizado no fuso America/Sao_Paulo. Canceladas: ${data.cancelled ?? 0}.`;
+      } catch (err) {
+        if (forceNote) {
+          scheduleStatsNote.textContent = 'Falha ao carregar estatísticas do agendamento.';
+        }
+        console.error(err);
+      }
+    }
+
+    async function loadQR(forceLog = false) {
+      try {
+        const res = await fetch('/api/qr');
+        if (res.status === 401) { stopPolling(); redirectToLogin(); return; }
+        const data = await res.json();
+
+        const connected = !!data.connected;
+        if (forceLog || lastConnected !== connected) { addLog(connected ? 'Conectado.' : 'Desconectado / aguardando QR.'); }
+        lastConnected = connected;
+
+        const avatarEl = document.getElementById('me-avatar');
+        const connectedAvatarEl = document.getElementById('connected-avatar');
+        if (avatarEl && data.profilePicUrl) {
+          avatarEl.setAttribute('src', data.profilePicUrl);
+        }
+        if (connectedAvatarEl && data.profilePicUrl) {
+          connectedAvatarEl.setAttribute('src', data.profilePicUrl);
+        }
+
+        if (connected) {
+          const name = (data.pushName ? data.pushName : 'Sem nome') + (data.me ? ' - ' + data.me : '');
+          statusPill.textContent = 'INSTANCIA CONECTADA';
+          statusPill.className = 'status-badge status-connected';
+          connectedName.textContent = name || '-';
+          lastQr = null;
+          qrModal.hide();
+        } else if (data.qrDataUrl) {
+          statusPill.textContent = 'AGUARDANDO CONECTAR';
+          statusPill.className = 'status-badge status-waiting';
+          qrImg.src = data.qrDataUrl;
+          lastQr = data.qrDataUrl;
+          connectedName.textContent = '-';
+        } else {
+          statusPill.textContent = 'INSTANCIA DESCONECTADA';
+          statusPill.className = 'status-badge status-disconnected';
+          lastQr = null;
+          connectedName.textContent = '-';
+        }
+        hideLoader();
+      } catch (err) {
+        statusPill.textContent = 'ERRO';
+        statusPill.className = 'status-badge status-disconnected';
+        addLog('Erro ao carregar QR.');
+        console.error(err);
+        hideLoader();
+      }
+    }
+
+    ensureAuthAndStart();
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in-view');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+
+    animatables.forEach((el, idx) => {
+      // pequeno atraso escalonado para sensação de cascata
+      el.style.transitionDelay = `${idx * 60}ms`;
+      observer.observe(el);
+    });
+  </script>
+</body>
+
+</html>

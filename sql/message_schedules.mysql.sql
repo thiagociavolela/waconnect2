@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS message_schedules (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  type VARCHAR(20) NOT NULL DEFAULT 'text',
+  to_number VARCHAR(30) NOT NULL,
+  message_text TEXT NULL,
+  payload_json JSON NULL,
+  scheduled_at DATETIME(3) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 3,
+  last_error TEXT NULL,
+  processing_at DATETIME(3) NULL,
+  sent_at DATETIME(3) NULL,
+  result_json JSON NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  created_by VARCHAR(100) NULL,
+  external_ref VARCHAR(100) NULL,
+  KEY idx_schedule_status_time (status, scheduled_at),
+  KEY idx_schedule_external_ref (external_ref)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

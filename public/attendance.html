@@ -1,0 +1,2376 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WaConnect | Atendimento</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+  <link href="assets/css/css-attendance.css" rel="stylesheet" crossorigin="anonymous">
+  <link rel="icon" type="image/png" href="favicon.png" />
+</head>
+
+<body>
+  <div id="loader" class="loader-overlay hidden">
+    <div class="spinner-dot"></div>
+  </div>
+  <div class="composer-toast-stack" id="composer-toast-stack"></div>
+
+  <div class="support-page">
+    <div class="support-sidebar-shell">
+    <aside class="support-toolbar" aria-label="Ferramentas do atendimento">
+      <div class="toolbar-section">
+        <a href="#" class="toolbar-brand active" aria-label="Central de atendimento">
+          <img src="/favicon.png" alt="WaConnect">
+        </a>
+
+        <div class="toolbar-divider"></div>
+
+        <a href="/attendance.html" class="toolbar-icon-btn active" title="Conversas" aria-label="Conversas">
+          <i class="bi bi-chat-left-text-fill"></i>
+        </a>
+
+        <div class="toolbar-divider"></div>
+
+        <a href="/schedules.html" class="toolbar-icon-btn" title="Campanhas" aria-label="Campanhas">
+          <i class="bi bi-megaphone-fill"></i>
+        </a>
+
+        <div class="toolbar-divider"></div>
+
+        <button type="button" class="toolbar-icon-btn has-indicator" id="toolbar-realtime-btn" title="Tempo real" aria-label="Tempo real">
+          <i class="bi bi-broadcast-pin"></i>
+          <span class="toolbar-indicator" id="toolbar-realtime-dot"></span>
+        </button>
+
+        <!--<button type="button" class="toolbar-icon-btn" id="toolbar-details-btn" title="Detalhes da conversa" aria-label="Detalhes da conversa">
+          <i class="bi bi-layout-sidebar-inset"></i>
+        </button>-->
+
+      </div>
+
+      <div class="toolbar-divider"></div>
+
+      <div class="toolbar-section">
+        <!--<button type="button" class="toolbar-icon-btn" id="toolbar-schedule-btn" title="Agendar mensagem" aria-label="Agendar mensagem">
+          <i class="bi bi-alarm"></i>
+        </button>-->
+      </div>
+
+      <div class="toolbar-section">
+        <button type="button" class="toolbar-icon-btn accent" id="toolbar-new-conversation-btn" title="Novo atendimento" aria-label="Novo atendimento">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      </div>
+
+
+      <div class="toolbar-spacer"></div>
+
+      <div class="toolbar-section">
+        <a href="/index.html" class="toolbar-icon-btn" title="Dashboard" aria-label="Dashboard">
+          <i class="bi bi-grid-1x2"></i>
+        </a>
+
+        <div class="toolbar-divider"></div>
+
+
+        <a href="/api-docs" target="_blank" rel="noopener" class="toolbar-icon-btn" title="Documentação da API" aria-label="Documentação da API">
+          <i class="bi bi-code-slash"></i>
+        </a>
+
+        <div class="toolbar-divider"></div>
+
+        <!--<button type="button" class="toolbar-icon-btn" id="toolbar-attach-file-btn" title="Anexar arquivo" aria-label="Anexar arquivo">
+          <i class="bi bi-image"></i>
+        </button>-->
+        
+        <!--<button type="button" class="toolbar-icon-btn" id="toolbar-settings-btn" title="Painel do atendimento" aria-label="Painel do atendimento">
+          <i class="bi bi-gear"></i>
+        </button>-->
+        
+        <button type="button" class="toolbar-icon-btn" id="toolbar-logout-btn" title="Sair" aria-label="Sair">
+          <i class="bi bi-box-arrow-right"></i>
+        </button>
+      </div>
+    </aside>
+
+    <aside class="support-sidebar">
+      <div class="sidebar-top">
+        <div class="brand-row">
+          <img src="/logo-login.png" alt="WaConnect" class="brand-logo">
+          <button type="button" class="sidebar-link" id="new-conversation-btn" title="Novo contato">
+            <i class="bi bi-person-plus-fill"></i>
+            <span>Novo</span>
+          </button>
+        </div>
+
+        <div class="search-box whatsapp-search">
+          <i class="bi bi-search"></i>
+          <input id="conversation-search" type="text" placeholder="Pesquisar ou começar uma nova conversa">
+        </div>
+
+        <div class="filter-pills whatsapp-pills" id="status-pills">
+          <button type="button" class="status-pill-filter active" data-status="new">
+            <span>Pendentes</span>
+            <span class="filter-badge" id="filter-count-new">0</span>
+          </button>
+          <button type="button" class="status-pill-filter" data-status="open">
+            <span>Abertos</span>
+            <span class="filter-badge" id="filter-count-open">0</span>
+          </button>
+          <button type="button" class="status-pill-filter" data-status="closed">
+            <span>Concluídos</span>
+            <span class="filter-badge" id="filter-count-closed">0</span>
+          </button>
+          <button type="button" class="status-pill-filter" data-status="">
+            <span>Todas</span>
+            <span class="filter-badge" id="filter-count-all">0</span>
+          </button>
+          <button type="button" class="status-pill-filter" data-status="waiting_agent">
+            <span>Equipe</span>
+            <span class="filter-badge" id="filter-count-waiting-agent">0</span>
+          </button>
+        </div>
+
+        <div class="sidebar-section-head">
+          <div>
+            <h2>Conversas</h2>
+            <span id="conversation-counter">0 registros</span>
+          </div>
+          <div class="mini-state" id="realtime-badge">
+            <span class="mini-dot" id="realtime-dot"></span>
+            <span id="realtime-text">Tempo real</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="conversation-list" id="conversation-list">
+        <div class="empty-note">Carregando conversas...</div>
+      </div>
+
+      <div class="sidebar-footer">
+        <a href="/index.html" class="footer-link"><i class="bi bi-grid-1x2"></i> Dashboard</a>
+        <a href="/api-docs" target="_blank" rel="noopener" class="footer-link"><i class="bi bi-journal-code"></i> API</a>
+        <a href="#" id="logout-btn" class="footer-link"><i class="bi bi-box-arrow-right"></i> Sair</a>
+      </div>
+    </aside>
+    </div>
+
+    <main class="chat-shell">
+      <header class="chat-topbar">
+        <div class="contact-summary">
+          <div class="contact-avatar" id="contact-avatar">C</div>
+          <div class="contact-text">
+            <h1 id="chat-contact-name">Selecione uma conversa</h1>
+            <p id="chat-contact-subtitle">Sem conversa ativa no momento.</p>
+          </div>
+        </div>
+
+        <div class="chat-actions">
+          <div class="status-chip" id="chat-status-pill">---</div>
+          <button type="button" class="round-action secondary" id="mark-read-btn" title="Concluir atendimento" disabled>
+            <i class="bi bi-check2-circle"></i>
+          </button>
+          <button type="button" class="round-action" id="open-details-btn" title="Detalhes do atendimento" disabled>
+            <i class="bi bi-sliders"></i>
+          </button>
+        </div>
+      </header>
+
+      <section class="chat-stage">
+        <div class="chat-stream" id="chat-body">
+          <div class="empty-stage" id="chat-empty">
+            <div class="empty-stage-content">
+              <div class="empty-stage-title">Nenhuma conversa carregada</div>
+              <div class="empty-stage-text">Selecione um atendimento na lateral para iniciar o chat.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-shell">
+          <div class="composer-tools">
+            <input id="media-file-input" class="hidden-file-input" type="file"
+              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.7z,application/*">
+            <input id="reply-agent-name" type="hidden">
+            <div class="hidden">
+              <span class="mini-dot connected" id="wa-status-dot"></span>
+              <span id="wa-status-text">WhatsApp</span>
+            </div>
+            <div class="composer-action-cluster">
+              <button type="button" class="composer-action-btn" id="attach-file-btn" title="Enviar imagem, PDF, documento ou arquivo" disabled>
+                <i class="bi bi-paperclip"></i>
+              </button>
+              <div class="emoji-anchor">
+                <button type="button" class="composer-action-btn" id="emoji-toggle-btn" title="Adicionar emoticon" disabled>
+                  <i class="bi bi-emoji-smile"></i>
+                </button>
+                <div class="emoji-panel hidden" id="emoji-panel">
+                  <emoji-picker id="emoji-picker-element"></emoji-picker>
+                  <button type="button" class="emoji-option" data-emoji="😀">😀</button>
+                  <button type="button" class="emoji-option" data-emoji="😉">😉</button>
+                  <button type="button" class="emoji-option" data-emoji="😍">😍</button>
+                  <button type="button" class="emoji-option" data-emoji="🙏">🙏</button>
+                  <button type="button" class="emoji-option" data-emoji="👍">👍</button>
+                  <button type="button" class="emoji-option" data-emoji="🎉">🎉</button>
+                  <button type="button" class="emoji-option" data-emoji="📌">📌</button>
+                  <button type="button" class="emoji-option" data-emoji="✅">✅</button>
+                </div>
+              </div>
+              <button type="button" class="composer-action-btn" id="schedule-message-btn" title="Agendar mensagem" disabled>
+                <i class="bi bi-alarm"></i>
+              </button>
+              <button type="button" class="composer-action-btn" id="record-audio-btn" title="Gravar áudio" disabled>
+                <i class="bi bi-mic"></i>
+              </button>
+            </div>
+          </div>
+          <div class="composer-attachment-preview hidden" id="composer-attachment-preview">
+            <div class="composer-attachment-card" id="composer-attachment-card">
+              <div class="composer-attachment-media" id="composer-attachment-media"></div>
+              <div class="composer-attachment-meta">
+                <div class="composer-attachment-name" id="composer-attachment-name">Arquivo</div>
+                <div class="composer-attachment-type" id="composer-attachment-type">Pronto para envio</div>
+              </div>
+              <button type="button" class="composer-attachment-remove" id="composer-attachment-remove" title="Remover anexo" aria-label="Remover anexo">
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </div>
+          </div>
+          <div class="composer-row">
+            <textarea id="reply-message" class="composer-input" rows="2" placeholder="Digite uma mensagem..." disabled></textarea>
+            <button type="button" class="send-btn" id="send-reply-btn" disabled>
+              <i class="bi bi-send-fill"></i>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <aside class="details-drawer" id="details-drawer">
+    <div class="drawer-scrim" id="drawer-scrim"></div>
+    <div class="drawer-panel">
+      <div class="drawer-header">
+        <div>
+          <h3>Painel do atendimento</h3>
+          <p>Controle interno e contexto da conversa.</p>
+        </div>
+        <button type="button" class="drawer-close" id="close-details-btn">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+      <div class="drawer-body">
+        <section class="drawer-card">
+          <h4>Contato</h4>
+          <div class="meta-line">
+            <span>Nome</span>
+            <strong id="detail-contact-name">---</strong>
+          </div>
+          <div class="meta-line">
+            <span>Número</span>
+            <strong id="detail-contact-number">---</strong>
+          </div>
+          <div class="meta-line">
+            <span>Última atividade</span>
+            <strong id="detail-last-activity">---</strong>
+          </div>
+          <div class="meta-line">
+            <span>Não lidas</span>
+            <strong id="detail-unread-count">0</strong>
+          </div>
+          <div class="meta-block">
+            <span>Última mensagem</span>
+            <div id="detail-last-message" class="message-snippet">---</div>
+          </div>
+        </section>
+
+        <section class="drawer-card">
+          <h4>Distribuição</h4>
+          <label class="field-label">Atendente responsável</label>
+          <input class="soft-input" id="assigned-agent-input" placeholder="Nome do atendente" disabled>
+
+          <label class="field-label">Status</label>
+          <select class="soft-select" id="conversation-status-select" disabled>
+            <option value="new">Nova</option>
+            <option value="open">Aberta</option>
+            <option value="waiting_customer">Aguardando cliente</option>
+            <option value="waiting_agent">Aguardando equipe</option>
+            <option value="closed">Encerrada</option>
+          </select>
+
+          <button type="button" class="primary-btn full" id="save-assignment-btn" disabled>Salvar atendimento</button>
+        </section>
+
+        <section class="drawer-card">
+          <h4>Tags</h4>
+          <label class="field-label">Separadas por vírgula</label>
+          <input class="soft-input" id="conversation-tags-input" placeholder="vip, cobrança, retorno" disabled>
+          <div class="tag-preview" id="detail-tags-preview">
+            <span class="tag-chip muted">Sem tags</span>
+          </div>
+          <button type="button" class="secondary-btn full" id="save-tags-btn" disabled>Salvar tags</button>
+        </section>
+
+        <section class="drawer-card">
+          <div class="notes-head">
+            <div>
+              <h4>Notas internas</h4>
+              <p id="notes-count-label">Sem anotações ainda.</p>
+            </div>
+          </div>
+
+          <div class="notes-list" id="notes-list">
+            <div class="empty-note">Selecione uma conversa para visualizar as notas.</div>
+          </div>
+
+          <label class="field-label">Autor</label>
+          <input class="soft-input" id="note-author-input" placeholder="Autor da nota" disabled>
+          <label class="field-label">Observação</label>
+          <textarea class="soft-textarea" id="note-text" rows="4" placeholder="Escreva uma observação interna..." disabled></textarea>
+          <button type="button" class="primary-btn full" id="save-note-btn" disabled>Adicionar nota</button>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <div class="modal fade" id="newConversationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content soft-modal">
+        <div class="modal-header">
+          <h5 class="modal-title">Abrir novo atendimento</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Número do cliente</label>
+            <input class="soft-input" id="new-conversation-number" placeholder="5599999999999">
+          </div>
+          <div>
+            <label class="form-label">Nome do contato</label>
+            <input class="soft-input" id="new-conversation-name" placeholder="Nome opcional">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-btn" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="primary-btn" id="create-conversation-btn">Criar conversa</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="scheduleMessageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content soft-modal">
+        <div class="modal-header">
+          <h5 class="modal-title">Agendar mensagem</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Data e horário</label>
+            <input class="soft-input" id="schedule-message-at" type="datetime-local">
+            <div class="form-text text-light-emphasis mt-2">Horário oficial: America/Sao_Paulo (-03:00).</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Mensagem</label>
+            <textarea class="soft-textarea" id="schedule-message-text" rows="4" placeholder="Digite a mensagem para o agendamento..."></textarea>
+          </div>
+          <div>
+            <label class="form-label">Criado por</label>
+            <input class="soft-input" id="schedule-created-by" placeholder="Atendente ou origem do agendamento">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-btn" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="primary-btn" id="confirm-schedule-btn">Agendar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="conversationOpenConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content soft-modal">
+        <div class="modal-header">
+          <h5 class="modal-title" id="conversation-open-confirm-title">Abrir conversa</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0" id="conversation-open-confirm-text">Deseja abrir esta conversa?</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-btn" data-bs-dismiss="modal">Cancelar</button>
+          <button type="button" class="primary-btn" id="confirm-open-conversation-btn">Continuar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl image-preview-dialog">
+      <div class="modal-content image-preview-modal">
+        <div class="modal-header">
+          <h5 class="modal-title" id="image-preview-title">Visualizar imagem</h5>
+          <div class="image-preview-actions">
+            <a class="secondary-btn image-preview-link" id="image-preview-download" href="#" target="_blank" rel="noopener">
+              <i class="bi bi-box-arrow-up-right"></i>
+              <span>Abrir original</span>
+            </a>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <img id="image-preview-full" class="image-preview-full" src="" alt="Preview da imagem">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+  <script>
+    const LOGIN_PAGE = '/login.html';
+    const APP_TIMEZONE = 'America/Sao_Paulo';
+    const APP_TIMEZONE_OFFSET = '-03:00';
+    const loader = document.getElementById('loader');
+    const composerToastStack = document.getElementById('composer-toast-stack');
+    const logoutBtn = document.getElementById('logout-btn');
+    const waStatusDot = document.getElementById('wa-status-dot');
+    const waStatusText = document.getElementById('wa-status-text');
+    const realtimeDot = document.getElementById('realtime-dot');
+    const realtimeText = document.getElementById('realtime-text');
+    const toolbarRealtimeBtn = document.getElementById('toolbar-realtime-btn');
+    const toolbarRealtimeDot = document.getElementById('toolbar-realtime-dot');
+    const conversationSearch = document.getElementById('conversation-search');
+    const conversationCounter = document.getElementById('conversation-counter');
+    const conversationList = document.getElementById('conversation-list');
+    const statusPills = Array.from(document.querySelectorAll('[data-status]'));
+    const chatBody = document.getElementById('chat-body');
+    const chatEmpty = document.getElementById('chat-empty');
+    const chatContactName = document.getElementById('chat-contact-name');
+    const chatContactSubtitle = document.getElementById('chat-contact-subtitle');
+    const chatStatusPill = document.getElementById('chat-status-pill');
+    const contactAvatar = document.getElementById('contact-avatar');
+    const replyAgentName = document.getElementById('reply-agent-name');
+    const replyMessage = document.getElementById('reply-message');
+    const sendReplyBtn = document.getElementById('send-reply-btn');
+    const mediaFileInput = document.getElementById('media-file-input');
+    const attachFileBtn = document.getElementById('attach-file-btn');
+    const composerAttachmentPreview = document.getElementById('composer-attachment-preview');
+    const composerAttachmentCard = document.getElementById('composer-attachment-card');
+    const composerAttachmentMedia = document.getElementById('composer-attachment-media');
+    const composerAttachmentName = document.getElementById('composer-attachment-name');
+    const composerAttachmentType = document.getElementById('composer-attachment-type');
+    const composerAttachmentRemove = document.getElementById('composer-attachment-remove');
+    const emojiToggleBtn = document.getElementById('emoji-toggle-btn');
+    const emojiPanel = document.getElementById('emoji-panel');
+    const emojiPickerElement = document.getElementById('emoji-picker-element');
+    const scheduleMessageBtn = document.getElementById('schedule-message-btn');
+    const recordAudioBtn = document.getElementById('record-audio-btn');
+    const markReadBtn = document.getElementById('mark-read-btn');
+    const openDetailsBtn = document.getElementById('open-details-btn');
+    const detailsDrawer = document.getElementById('details-drawer');
+    const drawerScrim = document.getElementById('drawer-scrim');
+    const closeDetailsBtn = document.getElementById('close-details-btn');
+    const detailContactName = document.getElementById('detail-contact-name');
+    const detailContactNumber = document.getElementById('detail-contact-number');
+    const detailLastActivity = document.getElementById('detail-last-activity');
+    const detailUnreadCount = document.getElementById('detail-unread-count');
+    const detailLastMessage = document.getElementById('detail-last-message');
+    const assignedAgentInput = document.getElementById('assigned-agent-input');
+    const conversationStatusSelect = document.getElementById('conversation-status-select');
+    const conversationTagsInput = document.getElementById('conversation-tags-input');
+    const detailTagsPreview = document.getElementById('detail-tags-preview');
+    const saveAssignmentBtn = document.getElementById('save-assignment-btn');
+    const saveTagsBtn = document.getElementById('save-tags-btn');
+    const notesList = document.getElementById('notes-list');
+    const notesCountLabel = document.getElementById('notes-count-label');
+    const noteAuthorInput = document.getElementById('note-author-input');
+    const noteText = document.getElementById('note-text');
+    const saveNoteBtn = document.getElementById('save-note-btn');
+    const newConversationBtn = document.getElementById('new-conversation-btn');
+    const toolbarNewConversationBtn = document.getElementById('toolbar-new-conversation-btn');
+    const toolbarAttachFileBtn = document.getElementById('toolbar-attach-file-btn');
+    const toolbarScheduleBtn = document.getElementById('toolbar-schedule-btn');
+    const toolbarDetailsBtn = document.getElementById('toolbar-details-btn');
+    const toolbarSettingsBtn = document.getElementById('toolbar-settings-btn');
+    const toolbarLogoutBtn = document.getElementById('toolbar-logout-btn');
+    const createConversationBtn = document.getElementById('create-conversation-btn');
+    const newConversationNumber = document.getElementById('new-conversation-number');
+    const newConversationName = document.getElementById('new-conversation-name');
+    const newConversationModal = new bootstrap.Modal(document.getElementById('newConversationModal'));
+    const scheduleMessageAt = document.getElementById('schedule-message-at');
+    const scheduleMessageText = document.getElementById('schedule-message-text');
+    const scheduleCreatedBy = document.getElementById('schedule-created-by');
+    const confirmScheduleBtn = document.getElementById('confirm-schedule-btn');
+    const scheduleMessageModal = new bootstrap.Modal(document.getElementById('scheduleMessageModal'));
+    const conversationOpenConfirmTitle = document.getElementById('conversation-open-confirm-title');
+    const conversationOpenConfirmText = document.getElementById('conversation-open-confirm-text');
+    const confirmOpenConversationBtn = document.getElementById('confirm-open-conversation-btn');
+    const conversationOpenConfirmModal = new bootstrap.Modal(document.getElementById('conversationOpenConfirmModal'));
+    const imagePreviewTitle = document.getElementById('image-preview-title');
+    const imagePreviewFull = document.getElementById('image-preview-full');
+    const imagePreviewDownload = document.getElementById('image-preview-download');
+    const imagePreviewModal = new bootstrap.Modal(document.getElementById('imagePreviewModal'));
+
+    const state = {
+      attendanceEnabled: true,
+      filterStatus: 'new',
+      stats: null,
+      allConversations: [],
+      conversations: [],
+      activeConversationId: null,
+      activeConversation: null,
+      messages: [],
+      notes: [],
+      pendingComposerMedia: null,
+      eventSource: null,
+      refreshTimer: null,
+      pendingProfilePictureIds: new Set(),
+      recordingActive: false,
+      mediaRecorder: null,
+      mediaRecorderMimeType: '',
+      mediaRecorderChunks: [],
+      mediaRecorderStream: null,
+      pendingConversationOpen: null,
+      pendingConversationClose: null,
+      localMessageSeq: 0
+    };
+
+    function showLoader() {
+      loader.classList.remove('hidden');
+    }
+
+    function hideLoader() {
+      loader.classList.add('hidden');
+    }
+
+    function redirectToLogin() {
+      window.location.href = LOGIN_PAGE;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '---';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '---';
+      return new Intl.DateTimeFormat('pt-BR', {
+        timeZone: APP_TIMEZONE,
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
+    }
+
+    function conversationDisplayName(item) {
+      return item.contactName || item.contactNumber || 'Sem identificação';
+    }
+
+    function renderAvatarMarkup(item, className, fallbackText) {
+      if (item?.profilePicUrl) {
+        return `<img class="${className} avatar-photo" src="${escapeHtml(item.profilePicUrl)}" alt="${escapeHtml(conversationDisplayName(item))}">`;
+      }
+      return `<div class="${className}">${escapeHtml(fallbackText)}</div>`;
+    }
+
+    function statusLabel(status) {
+      if (status === 'new') return 'Pendente';
+      if (status === 'open') return 'Aberto';
+      if (status === 'waiting_customer') return 'Cliente';
+      if (status === 'waiting_agent') return 'Equipe';
+      if (status === 'closed') return 'Concluído';
+      return status || '---';
+    }
+
+    function statusLabelMessageType(type) {
+      if (type === 'text') return 'Texto';
+      if (type === 'image') return 'Imagem';
+      if (type === 'video') return 'Vídeo';
+      if (type === 'audio') return 'Áudio';
+      if (type === 'document') return 'Documento';
+      if (type === 'sticker') return 'Sticker';
+      return 'Outro';
+    }
+
+    function initialsFromName(value) {
+      const text = String(value || '').trim();
+      if (!text) return 'C';
+      const parts = text.split(/\s+/).slice(0, 2);
+      return parts.map((item) => item.charAt(0).toUpperCase()).join('');
+    }
+
+    function setRealtimeState(connected, label) {
+      realtimeDot.classList.toggle('connected', connected);
+      realtimeText.textContent = label;
+      toolbarRealtimeBtn?.classList.toggle('is-live', connected);
+      toolbarRealtimeDot?.classList.toggle('connected', connected);
+    }
+
+    function applyBaseConversationFilters(items) {
+      const search = conversationSearch.value.trim().toLowerCase();
+
+      return (items || []).filter((item) => {
+        if (!search) {
+          return true;
+        }
+
+        const haystack = [
+          item.contactName,
+          item.contactNumber,
+          item.assignedAgent,
+          item.lastMessageText
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return haystack.includes(search);
+      });
+    }
+
+    function applyStatusConversationFilter(items) {
+      if (!state.filterStatus) {
+        return items;
+      }
+
+      return items.filter((item) => item.status === state.filterStatus);
+    }
+
+    function renderFilterCounts(items) {
+      const baseItems = items || [];
+      const counts = {
+        all: baseItems.length,
+        new: baseItems.filter((item) => item.status === 'new').length,
+        open: baseItems.filter((item) => item.status === 'open').length,
+        closed: baseItems.filter((item) => item.status === 'closed').length,
+        waitingAgent: baseItems.filter((item) => item.status === 'waiting_agent').length
+      };
+
+      document.getElementById('filter-count-all').textContent = String(counts.all);
+      document.getElementById('filter-count-new').textContent = String(counts.new);
+      document.getElementById('filter-count-open').textContent = String(counts.open);
+      document.getElementById('filter-count-closed').textContent = String(counts.closed);
+      document.getElementById('filter-count-waiting-agent').textContent = String(counts.waitingAgent);
+    }
+
+    function setInteractionEnabled(enabled) {
+      replyAgentName.disabled = !enabled;
+      replyMessage.disabled = !enabled;
+      sendReplyBtn.disabled = !enabled;
+      attachFileBtn.disabled = !enabled;
+      emojiToggleBtn.disabled = !enabled;
+      scheduleMessageBtn.disabled = !enabled;
+      recordAudioBtn.disabled = !enabled;
+      markReadBtn.disabled = !enabled;
+      openDetailsBtn.disabled = !enabled;
+      assignedAgentInput.disabled = !enabled;
+      conversationStatusSelect.disabled = !enabled;
+      conversationTagsInput.disabled = !enabled;
+      saveAssignmentBtn.disabled = !enabled;
+      saveTagsBtn.disabled = !enabled;
+      noteAuthorInput.disabled = !enabled;
+      noteText.disabled = !enabled;
+      saveNoteBtn.disabled = !enabled;
+    }
+
+    function closeEmojiPanel() {
+      emojiPanel.classList.add('hidden');
+      emojiToggleBtn.classList.remove('active');
+    }
+
+    function toggleEmojiPanel() {
+      const willOpen = emojiPanel.classList.contains('hidden');
+      if (!willOpen) {
+        closeEmojiPanel();
+        return;
+      }
+
+      emojiPanel.classList.remove('hidden');
+      emojiToggleBtn.classList.add('active');
+    }
+
+    function insertTextAtCursor(element, text) {
+      const start = element.selectionStart ?? element.value.length;
+      const end = element.selectionEnd ?? element.value.length;
+      const before = element.value.slice(0, start);
+      const after = element.value.slice(end);
+      element.value = `${before}${text}${after}`;
+      const nextPosition = start + text.length;
+      element.focus();
+      element.setSelectionRange(nextPosition, nextPosition);
+    }
+
+    function setRecordingState(active) {
+      state.recordingActive = active;
+      recordAudioBtn.classList.toggle('recording', active);
+      recordAudioBtn.title = active ? 'Parar gravação' : 'Gravar áudio';
+      recordAudioBtn.innerHTML = active
+        ? '<i class="bi bi-stop-fill"></i>'
+        : '<i class="bi bi-mic"></i>';
+      replyMessage.placeholder = active ? 'Gravando áudio...' : 'Digite uma mensagem...';
+    }
+
+    function stopMediaRecorderTracks() {
+      if (state.mediaRecorderStream) {
+        state.mediaRecorderStream.getTracks().forEach((track) => track.stop());
+      }
+      state.mediaRecorderStream = null;
+    }
+
+    function detectSupportedAudioMimeType() {
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/ogg;codecs=opus',
+        'audio/webm',
+        'audio/ogg'
+      ];
+
+      if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+        return '';
+      }
+
+      return candidates.find((item) => MediaRecorder.isTypeSupported(item)) || '';
+    }
+
+    function formatDateTimeLocalInput(date) {
+      const formatter = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: APP_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      return formatter.format(date).replace(' ', 'T');
+    }
+
+    function appLocalInputToIso(value) {
+      const input = String(value || '').trim();
+      if (!input) return '';
+      if (/[zZ]|[+-]\d{2}:\d{2}$/.test(input)) {
+        return input;
+      }
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input)) {
+        return `${input}:00${APP_TIMEZONE_OFFSET}`;
+      }
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(input)) {
+        return `${input}${APP_TIMEZONE_OFFSET}`;
+      }
+      return input;
+    }
+
+    function buildDefaultScheduleDate() {
+      const next = new Date(Date.now() + 10 * 60 * 1000);
+      next.setSeconds(0, 0);
+      return formatDateTimeLocalInput(next);
+    }
+
+    function enableHorizontalDragScroll(element) {
+      if (!element) return;
+
+      let activePointerId = null;
+      let startX = 0;
+      let startScrollLeft = 0;
+      let suppressClick = false;
+
+      const handlePointerMove = (event) => {
+        if (activePointerId !== event.pointerId) return;
+        const delta = event.clientX - startX;
+        if (Math.abs(delta) <= 6 && !suppressClick) {
+          return;
+        }
+
+        suppressClick = true;
+        element.classList.add('dragging');
+        element.scrollLeft = startScrollLeft - delta;
+        event.preventDefault();
+      };
+
+      const stopDragging = (event) => {
+        if (activePointerId !== event.pointerId) return;
+        activePointerId = null;
+        element.classList.remove('dragging');
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', stopDragging);
+        window.removeEventListener('pointercancel', stopDragging);
+      };
+
+      element.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        activePointerId = event.pointerId;
+        suppressClick = false;
+        startX = event.clientX;
+        startScrollLeft = element.scrollLeft;
+        window.addEventListener('pointermove', handlePointerMove, { passive: false });
+        window.addEventListener('pointerup', stopDragging);
+        window.addEventListener('pointercancel', stopDragging);
+      });
+
+      element.addEventListener('click', (event) => {
+        if (!suppressClick) return;
+        event.preventDefault();
+        event.stopPropagation();
+        suppressClick = false;
+      }, true);
+
+      element.addEventListener('wheel', (event) => {
+        if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+        event.preventDefault();
+        element.scrollLeft += event.deltaY;
+      }, { passive: false });
+    }
+
+    function openDrawer() {
+      detailsDrawer.classList.add('open');
+    }
+
+    function closeDrawer() {
+      detailsDrawer.classList.remove('open');
+    }
+
+    function renderConversations() {
+      conversationCounter.textContent = `${state.conversations.length} registro(s)`;
+
+      if (!state.attendanceEnabled) {
+        conversationList.innerHTML = '<div class="empty-note">Módulo de atendimento desabilitado.</div>';
+        return;
+      }
+
+      if (!state.conversations.length) {
+        conversationList.innerHTML = '<div class="empty-note">Nenhuma conversa encontrada com os filtros atuais.</div>';
+        return;
+      }
+
+      conversationList.innerHTML = state.conversations.map((item) => `
+        <article class="conversation-card ${item.id === state.activeConversationId ? 'active' : ''}" data-conversation-id="${item.id}">
+          ${renderAvatarMarkup(item, 'conversation-avatar', initialsFromName(conversationDisplayName(item)))}
+          <div class="conversation-content">
+            <div class="conversation-head">
+              <strong>${escapeHtml(conversationDisplayName(item))}</strong>
+              <span>${escapeHtml(formatDateTime(item.lastMessageAt || item.updatedAt))}</span>
+            </div>
+            <div class="conversation-preview-row">
+              <div class="conversation-preview">${escapeHtml(item.lastMessageText || 'Sem mensagens ainda')}</div>
+              ${item.unreadCount > 0 ? `<span class="unread-badge">${item.unreadCount}</span>` : ''}
+            </div>
+            <div class="conversation-foot">
+              <span class="status-badge ${item.status}">${escapeHtml(statusLabel(item.status))}</span>
+              <span class="assigned-label">${escapeHtml(item.assignedAgent || 'Sem atendente')}</span>
+            </div>
+          </div>
+        </article>
+      `).join('');
+
+      Array.from(conversationList.querySelectorAll('[data-conversation-id]')).forEach((node) => {
+        node.addEventListener('click', async () => {
+          const conversationId = node.getAttribute('data-conversation-id');
+          if (!conversationId) return;
+          const conversation = state.conversations.find((item) => item.id === conversationId) || null;
+          if (!conversation) return;
+          if (await maybeConfirmConversationOpen(conversation)) {
+            await openConversation(conversationId, true);
+          }
+        });
+      });
+    }
+
+    function askConversationOpenConfirmation({ title, text, conversationId, markRead }) {
+      return new Promise((resolve) => {
+        state.pendingConversationOpen = { resolve, conversationId, markRead };
+        conversationOpenConfirmTitle.textContent = title;
+        conversationOpenConfirmText.textContent = text;
+        conversationOpenConfirmModal.show();
+      });
+    }
+
+    function askConversationCloseConfirmation() {
+      return new Promise((resolve) => {
+        state.pendingConversationClose = { resolve };
+        conversationOpenConfirmTitle.textContent = 'Concluir conversa';
+        conversationOpenConfirmText.textContent = 'Esta conversa será concluída. Deseja realmente finalizar este atendimento?';
+        conversationOpenConfirmModal.show();
+      });
+    }
+
+    async function maybeConfirmConversationOpen(conversation) {
+      if (!conversation) {
+        return false;
+      }
+
+      if (conversation.status === 'new') {
+        return askConversationOpenConfirmation({
+          title: 'Abrir conversa pendente',
+          text: 'Esta conversa está pendente. Ao abrir, ela será movida para aberta. Deseja continuar?',
+          conversationId: conversation.id,
+          markRead: true
+        });
+      }
+
+      if (conversation.status === 'closed') {
+        return askConversationOpenConfirmation({
+          title: 'Abrir conversa concluída',
+          text: 'Esta conversa já está concluída. Deseja realmente abrir a conversa novamente?',
+          conversationId: conversation.id,
+          markRead: true
+        });
+      }
+
+      return true;
+    }
+
+    function refreshConversationView() {
+      const baseFiltered = applyBaseConversationFilters(state.allConversations);
+      renderFilterCounts(baseFiltered);
+      state.conversations = applyStatusConversationFilter(baseFiltered);
+      renderConversations();
+
+      const activeConversationFromAll =
+        state.activeConversationId
+          ? state.allConversations.find((item) => item.id === state.activeConversationId) || null
+          : null;
+
+      if (!state.conversations.length) {
+        state.activeConversation = activeConversationFromAll;
+        if (!state.activeConversation) {
+          state.activeConversationId = null;
+          state.messages = [];
+          state.notes = [];
+          renderMessages();
+        }
+        renderDetails();
+        return;
+      }
+
+      const activeExists = state.conversations.some((item) => item.id === state.activeConversationId);
+      if (!activeExists && !activeConversationFromAll) {
+        state.activeConversationId = null;
+      }
+
+      state.activeConversation =
+        state.conversations.find((item) => item.id === state.activeConversationId) ||
+        activeConversationFromAll;
+      if (!state.activeConversation) {
+        state.messages = [];
+        state.notes = [];
+        renderMessages();
+      }
+      renderDetails();
+    }
+
+    function renderMessages() {
+      chatBody.innerHTML = '';
+
+      if (!state.activeConversation) {
+        chatBody.appendChild(chatEmpty);
+        chatEmpty.classList.remove('hidden');
+        return;
+      }
+
+      chatEmpty.classList.add('hidden');
+
+      if (!state.messages.length) {
+        chatBody.innerHTML = '<div class="empty-stage"><div class="empty-stage-content"><div class="empty-stage-title">Conversa sem histórico</div><div class="empty-stage-text">As mensagens trocadas aparecerão aqui.</div></div></div>';
+        return;
+      }
+
+      chatBody.innerHTML = state.messages.map((item) => `
+        <div class="message-row ${item.direction}">
+          <div class="message-card ${item.direction} ${item.clientStatus ? `is-${item.clientStatus}` : ''}">
+            ${renderMessageMedia(item)}
+            ${item.messageType !== 'text' && !item.mediaUrl ? `<div class="message-attachment">${escapeHtml(statusLabelMessageType(item.messageType))}</div>` : ''}
+            <div class="message-text">${escapeHtml(item.messageText || '[Mensagem sem texto]')}</div>
+            <div class="message-meta">
+              <span>${escapeHtml(statusLabelMessageType(item.messageType))}</span>
+              <span>${escapeHtml(formatDateTime(item.createdAt))}</span>
+              ${item.agentName ? `<span>${escapeHtml(item.agentName)}</span>` : ''}
+              ${renderMessageStatusIcon(item)}
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function renderMessageMedia(item) {
+      if (!item?.mediaUrl) {
+        return '';
+      }
+
+      if (item.messageType === 'image') {
+        const imageAlt = item.messageText || 'Imagem enviada';
+        return `<button type="button" class="message-media image message-media-zoom" data-image-src="${escapeHtml(item.mediaUrl)}" data-image-alt="${escapeHtml(imageAlt)}" aria-label="Ampliar imagem"><img src="${escapeHtml(item.mediaUrl)}" alt="${escapeHtml(imageAlt)}" loading="lazy"></button>`;
+      }
+
+      if (item.messageType === 'video') {
+        return `<div class="message-media video"><video src="${escapeHtml(item.mediaUrl)}" controls preload="metadata"></video></div>`;
+      }
+
+      if (item.messageType === 'audio') {
+        return `<div class="message-media audio"><audio src="${escapeHtml(item.mediaUrl)}" controls preload="metadata"></audio></div>`;
+      }
+
+      return `<a class="message-media file" href="${escapeHtml(item.mediaUrl)}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-arrow-down"></i><span>${escapeHtml(item.messageText || 'Arquivo enviado')}</span></a>`;
+    }
+
+    function renderClientStatusIcon(status) {
+      if (status === 'sending') {
+        return '<span class="message-send-state sending" title="Mensagem aguardando confirmação" aria-label="Mensagem aguardando confirmação"><i class="bi bi-check2"></i></span>';
+      }
+
+      if (status === 'sent') {
+        return '<span class="message-send-state sent" title="Mensagem enviada" aria-label="Mensagem enviada"><i class="bi bi-check2-all"></i></span>';
+      }
+
+      if (status === 'failed') {
+        return '<span class="message-send-state failed" title="Falha no envio" aria-label="Falha no envio"><i class="bi bi-exclamation-circle"></i></span>';
+      }
+
+      return '';
+    }
+
+    function renderMessageStatusIcon(item) {
+      if (item?.clientStatus) {
+        return renderClientStatusIcon(item.clientStatus);
+      }
+
+      if (item?.direction === 'outbound') {
+        return renderClientStatusIcon('sent');
+      }
+
+      return '';
+    }
+
+    function openImagePreview(imageSrc, imageAlt) {
+      if (!imageSrc) return;
+      imagePreviewFull.src = imageSrc;
+      imagePreviewFull.alt = imageAlt || 'Preview da imagem';
+      imagePreviewDownload.href = imageSrc;
+      imagePreviewTitle.textContent = imageAlt || 'Visualizar imagem';
+      imagePreviewModal.show();
+    }
+
+    function showComposerToast(message, type = 'success') {
+      if (!composerToastStack) return;
+
+      const toast = document.createElement('div');
+      toast.className = `composer-toast ${type}`;
+      toast.textContent = message;
+      composerToastStack.appendChild(toast);
+
+      window.requestAnimationFrame(() => {
+        toast.classList.add('visible');
+      });
+
+      window.setTimeout(() => {
+        toast.classList.remove('visible');
+        window.setTimeout(() => toast.remove(), 220);
+      }, 2600);
+    }
+
+    function updateConversationLocally(conversationId, patch) {
+      const applyPatch = (item) => {
+        if (!item || item.id !== conversationId) {
+          return item;
+        }
+        return { ...item, ...patch };
+      };
+
+      state.allConversations = state.allConversations.map(applyPatch);
+      state.conversations = state.conversations.map(applyPatch);
+
+      if (state.activeConversation?.id === conversationId) {
+        state.activeConversation = { ...state.activeConversation, ...patch };
+      }
+
+      renderConversations();
+      renderDetails();
+    }
+
+    function appendOptimisticMessage(messageText, agentName) {
+      const conversationId = state.activeConversationId;
+      const optimisticId = `local-message-${Date.now()}-${++state.localMessageSeq}`;
+      const optimisticMessage = {
+        id: optimisticId,
+        conversationId,
+        direction: 'outbound',
+        messageType: 'text',
+        messageText,
+        mediaUrl: null,
+        waMessageId: null,
+        agentName: agentName || null,
+        createdAt: new Date().toISOString(),
+        clientStatus: 'sending'
+      };
+
+      state.messages = [...state.messages, optimisticMessage];
+      updateConversationLocally(conversationId, {
+        status: 'waiting_customer',
+        assignedAgent: agentName || state.activeConversation?.assignedAgent || null,
+        lastMessageText: messageText,
+        lastMessageDirection: 'outbound',
+        lastMessageType: 'text',
+        lastMessageAt: optimisticMessage.createdAt,
+        unreadCount: 0,
+        updatedAt: optimisticMessage.createdAt
+      });
+      renderMessages();
+      return optimisticId;
+    }
+
+    function appendOptimisticMediaMessage({ messageType, messageText, mediaUrl, agentName }) {
+      const conversationId = state.activeConversationId;
+      const optimisticId = `local-media-${Date.now()}-${++state.localMessageSeq}`;
+      const createdAt = new Date().toISOString();
+      const optimisticMessage = {
+        id: optimisticId,
+        conversationId,
+        direction: 'outbound',
+        messageType,
+        messageText,
+        mediaUrl: mediaUrl || null,
+        waMessageId: null,
+        agentName: agentName || null,
+        createdAt,
+        clientStatus: 'sending'
+      };
+
+      state.messages = [...state.messages, optimisticMessage];
+      updateConversationLocally(conversationId, {
+        status: 'waiting_customer',
+        assignedAgent: agentName || state.activeConversation?.assignedAgent || null,
+        lastMessageText: messageText,
+        lastMessageDirection: 'outbound',
+        lastMessageType: messageType,
+        lastMessageAt: createdAt,
+        unreadCount: 0,
+        updatedAt: createdAt
+      });
+      renderMessages();
+      return optimisticId;
+    }
+
+    function updateOptimisticMessage(localId, patch) {
+      state.messages = state.messages.map((item) => {
+        if (item.id !== localId) {
+          return item;
+        }
+        return { ...item, ...patch };
+      });
+      renderMessages();
+    }
+
+    async function refreshConversationAfterSend(conversationId) {
+      try {
+        await Promise.all([loadStats(), loadConversations()]);
+        if (state.activeConversationId === conversationId) {
+          await Promise.all([
+            loadMessages(conversationId),
+            loadNotes(conversationId)
+          ]);
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function inferOutgoingMediaKind(file, forcedKind) {
+      if (forcedKind) {
+        return forcedKind;
+      }
+
+      const mimeType = String(file?.type || '').toLowerCase();
+      if (mimeType.startsWith('image/')) return 'image';
+      if (mimeType.startsWith('video/')) return 'video';
+      if (mimeType.startsWith('audio/')) return 'audio';
+      return 'document';
+    }
+
+    function buildOptimisticMediaText(kind, caption, fileName) {
+      const normalizedCaption = String(caption || '').trim();
+      const normalizedFileName = String(fileName || '').trim();
+      const baseLabel = kind === 'image'
+        ? '[Imagem enviada]'
+        : kind === 'video'
+          ? '[Vídeo enviado]'
+          : kind === 'audio'
+            ? '[Áudio enviado]'
+            : '[Arquivo enviado]';
+
+      const details = [normalizedCaption, normalizedFileName].filter(Boolean);
+      return details.length ? `${baseLabel} ${details.join(' - ')}` : baseLabel;
+    }
+
+    function buildClipboardFileName(file) {
+      const existingName = String(file?.name || '').trim();
+      if (existingName) {
+        return existingName;
+      }
+
+      const mimeType = String(file?.type || '').toLowerCase();
+      const extension = resolveClipboardExtension(mimeType);
+      return `anexo-${Date.now()}.${extension}`;
+    }
+
+    function resolveClipboardExtension(mimeType) {
+      if (mimeType.includes('png')) return 'png';
+      if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return 'jpg';
+      if (mimeType.includes('gif')) return 'gif';
+      if (mimeType.includes('webp')) return 'webp';
+      if (mimeType.includes('mp4')) return 'mp4';
+      if (mimeType.includes('mpeg')) return 'mp3';
+      if (mimeType.includes('ogg')) return 'ogg';
+      if (mimeType.includes('pdf')) return 'pdf';
+      if (mimeType.includes('word')) return 'docx';
+      if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return 'xlsx';
+      if (mimeType.includes('csv')) return 'csv';
+      if (mimeType.includes('zip')) return 'zip';
+      return 'bin';
+    }
+
+    function normalizeComposerFile(file) {
+      if (!file) return null;
+      const fileName = buildClipboardFileName(file);
+      if (file.name === fileName) {
+        return file;
+      }
+      return new File([file], fileName, {
+        type: file.type || 'application/octet-stream',
+        lastModified: Date.now()
+      });
+    }
+
+    function removePendingComposerMedia() {
+      if (state.pendingComposerMedia?.previewUrl) {
+        URL.revokeObjectURL(state.pendingComposerMedia.previewUrl);
+      }
+      state.pendingComposerMedia = null;
+      renderComposerMediaPreview();
+    }
+
+    function stageComposerMedia(file, forcedKind = null) {
+      const normalizedFile = normalizeComposerFile(file);
+      if (!normalizedFile) return;
+
+      removePendingComposerMedia();
+
+      const kind = inferOutgoingMediaKind(normalizedFile, forcedKind);
+      const previewUrl = kind === 'image' ? URL.createObjectURL(normalizedFile) : null;
+      state.pendingComposerMedia = {
+        file: normalizedFile,
+        kind,
+        previewUrl
+      };
+      renderComposerMediaPreview();
+    }
+
+    function restorePendingComposerMedia(pendingMedia) {
+      if (!pendingMedia?.file) return;
+      removePendingComposerMedia();
+      state.pendingComposerMedia = pendingMedia;
+      renderComposerMediaPreview();
+    }
+
+    function composerMediaKindLabel(kind) {
+      if (kind === 'image') return 'Imagem pronta para envio';
+      if (kind === 'video') return 'Vídeo pronto para envio';
+      if (kind === 'audio') return 'Áudio pronto para envio';
+      return 'Documento pronto para envio';
+    }
+
+    function renderComposerMediaPreview() {
+      if (!composerAttachmentPreview || !composerAttachmentCard || !composerAttachmentMedia || !composerAttachmentName || !composerAttachmentType) {
+        return;
+      }
+
+      const pending = state.pendingComposerMedia;
+      if (!pending?.file) {
+        composerAttachmentPreview.classList.add('hidden');
+        composerAttachmentCard.className = 'composer-attachment-card';
+        composerAttachmentMedia.innerHTML = '';
+        composerAttachmentName.textContent = 'Arquivo';
+        composerAttachmentType.textContent = 'Pronto para envio';
+        return;
+      }
+
+      composerAttachmentPreview.classList.remove('hidden');
+      composerAttachmentCard.className = `composer-attachment-card is-${pending.kind}`;
+      composerAttachmentName.textContent = pending.file.name || 'Arquivo';
+      composerAttachmentType.textContent = composerMediaKindLabel(pending.kind);
+
+      if (pending.kind === 'image' && pending.previewUrl) {
+        composerAttachmentMedia.innerHTML = `<img src="${escapeHtml(pending.previewUrl)}" alt="${escapeHtml(pending.file.name || 'Imagem colada')}">`;
+        return;
+      }
+
+      const iconClass = pending.kind === 'video'
+        ? 'bi-film'
+        : pending.kind === 'audio'
+          ? 'bi-file-earmark-music'
+          : 'bi-file-earmark-richtext';
+      composerAttachmentMedia.innerHTML = `<span class="composer-attachment-icon"><i class="bi ${iconClass}"></i></span>`;
+    }
+
+    function applyConversationProfilePicture(conversationId, profilePicUrl) {
+      if (!conversationId || !profilePicUrl) {
+        return;
+      }
+
+      const syncItem = (item) => {
+        if (!item || item.id !== conversationId) {
+          return item;
+        }
+
+        return { ...item, profilePicUrl };
+      };
+
+      state.allConversations = state.allConversations.map(syncItem);
+      state.conversations = state.conversations.map(syncItem);
+
+      if (state.activeConversation?.id === conversationId) {
+        state.activeConversation = { ...state.activeConversation, profilePicUrl };
+      }
+
+      renderConversations();
+      renderDetails();
+    }
+
+    function renderNotes() {
+      if (!state.activeConversation) {
+        notesList.innerHTML = '<div class="empty-note">Selecione uma conversa para visualizar as notas.</div>';
+        notesCountLabel.textContent = 'Sem anotações ainda.';
+        return;
+      }
+
+      notesCountLabel.textContent = state.notes.length
+        ? `${state.notes.length} nota(s) registrada(s).`
+        : 'Nenhuma nota registrada para esta conversa.';
+
+      if (!state.notes.length) {
+        notesList.innerHTML = '<div class="empty-note">Nenhuma nota interna registrada.</div>';
+        return;
+      }
+
+      notesList.innerHTML = state.notes.map((item) => `
+        <article class="note-card">
+          <div class="note-meta">
+            <strong>${escapeHtml(item.createdBy || 'Equipe')}</strong>
+            <span>${escapeHtml(formatDateTime(item.createdAt))}</span>
+          </div>
+          <div class="note-text">${escapeHtml(item.noteText || '')}</div>
+        </article>
+      `).join('');
+    }
+
+    function renderDetails() {
+      const item = state.activeConversation;
+      if (!item) {
+        chatContactName.textContent = 'Selecione uma conversa';
+        chatContactSubtitle.textContent = 'Sem conversa ativa no momento.';
+        chatStatusPill.textContent = '---';
+        chatStatusPill.className = 'status-chip';
+        contactAvatar.className = 'contact-avatar';
+        contactAvatar.innerHTML = 'C';
+        detailContactName.textContent = '---';
+        detailContactNumber.textContent = '---';
+        detailLastActivity.textContent = '---';
+        detailUnreadCount.textContent = '0';
+        detailLastMessage.textContent = '---';
+        detailTagsPreview.innerHTML = '<span class="tag-chip muted">Sem tags</span>';
+        assignedAgentInput.value = '';
+        conversationStatusSelect.value = 'new';
+        conversationTagsInput.value = '';
+        replyAgentName.value = '';
+        replyMessage.value = '';
+        removePendingComposerMedia();
+        noteAuthorInput.value = '';
+        noteText.value = '';
+        setInteractionEnabled(false);
+        renderNotes();
+        return;
+      }
+
+      chatContactName.textContent = conversationDisplayName(item);
+      chatContactSubtitle.textContent = `${item.contactNumber || '---'} • ${item.assignedAgent || 'sem atendente definido'}`;
+      chatStatusPill.textContent = statusLabel(item.status);
+      chatStatusPill.className = `status-chip ${item.status}`;
+      if (item.profilePicUrl) {
+        contactAvatar.className = 'contact-avatar has-photo';
+        contactAvatar.innerHTML = `<img class="avatar-photo" src="${escapeHtml(item.profilePicUrl)}" alt="${escapeHtml(conversationDisplayName(item))}">`;
+      } else {
+        contactAvatar.className = 'contact-avatar';
+        contactAvatar.innerHTML = escapeHtml(initialsFromName(conversationDisplayName(item)));
+      }
+      detailContactName.textContent = conversationDisplayName(item);
+      detailContactNumber.textContent = item.contactNumber || '---';
+      detailLastActivity.textContent = formatDateTime(item.lastMessageAt || item.updatedAt);
+      detailUnreadCount.textContent = String(item.unreadCount ?? 0);
+      detailLastMessage.textContent = item.lastMessageText || '---';
+      detailTagsPreview.innerHTML = (item.tags || []).length
+        ? item.tags.map((tag) => `<span class="tag-chip">${escapeHtml(tag)}</span>`).join('')
+        : '<span class="tag-chip muted">Sem tags</span>';
+      assignedAgentInput.value = item.assignedAgent || '';
+      conversationStatusSelect.value = item.status;
+      conversationTagsInput.value = (item.tags || []).join(', ');
+      replyAgentName.value = item.assignedAgent || replyAgentName.value || '';
+      noteAuthorInput.value = item.assignedAgent || noteAuthorInput.value || '';
+      setInteractionEnabled(state.attendanceEnabled);
+      renderNotes();
+    }
+
+    async function readJsonSafe(response) {
+      try {
+        return await response.json();
+      } catch {
+        return null;
+      }
+    }
+
+    async function loadStatus() {
+      const response = await fetch('/api/status');
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      const data = await response.json();
+      const connected = Boolean(data.connected);
+      waStatusDot?.classList.toggle('connected', connected);
+      waStatusText.textContent = connected ? 'WhatsApp conectado' : 'WhatsApp aguardando conexão';
+    }
+
+    async function loadStats() {
+      const response = await fetch('/api/attendance/stats');
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (response.status === 503) {
+        state.attendanceEnabled = false;
+        state.stats = null;
+        state.allConversations = [];
+        renderFilterCounts([]);
+        renderConversations();
+        renderDetails();
+        setRealtimeState(false, 'Módulo desabilitado');
+        return;
+      }
+
+      state.attendanceEnabled = true;
+      state.stats = await response.json();
+    }
+
+    async function loadConversations() {
+      if (!state.attendanceEnabled) {
+        state.allConversations = [];
+        state.conversations = [];
+        renderFilterCounts([]);
+        renderConversations();
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+
+      const response = await fetch(`/api/attendance/conversations?${params.toString()}`);
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (!response.ok) {
+        state.allConversations = [];
+        state.conversations = [];
+        renderFilterCounts([]);
+        renderConversations();
+        return;
+      }
+
+      state.allConversations = await response.json();
+      refreshConversationView();
+    }
+
+    async function loadMessages(conversationId) {
+      if (!conversationId) return;
+
+      const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/messages?limit=200`);
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (!response.ok) {
+        const payload = await readJsonSafe(response);
+        throw new Error(payload?.error || 'Falha ao carregar mensagens.');
+      }
+
+      const data = await response.json();
+      state.activeConversation = data.conversation;
+      state.messages = data.messages || [];
+      renderDetails();
+      renderMessages();
+
+      if (!data.conversation?.profilePicUrl) {
+        void loadConversationProfilePicture(conversationId);
+      }
+    }
+
+    async function loadConversationProfilePicture(conversationId) {
+      if (!conversationId || state.pendingProfilePictureIds.has(conversationId)) {
+        return;
+      }
+
+      const conversation =
+        state.activeConversation?.id === conversationId
+          ? state.activeConversation
+          : state.allConversations.find((item) => item.id === conversationId) || null;
+
+      if (conversation?.profilePicUrl) {
+        return;
+      }
+
+      state.pendingProfilePictureIds.add(conversationId);
+
+      try {
+        const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/profile-picture`);
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = await response.json();
+        applyConversationProfilePicture(conversationId, payload?.profilePicUrl || null);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        state.pendingProfilePictureIds.delete(conversationId);
+      }
+    }
+
+    async function loadNotes(conversationId) {
+      if (!conversationId) {
+        state.notes = [];
+        renderNotes();
+        return;
+      }
+
+      const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/notes?limit=100`);
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (!response.ok) {
+        const payload = await readJsonSafe(response);
+        throw new Error(payload?.error || 'Falha ao carregar notas.');
+      }
+
+      const data = await response.json();
+      state.notes = data.notes || [];
+      renderNotes();
+    }
+
+    async function reloadConversationArea() {
+      await loadConversations();
+      if (state.activeConversationId) {
+        await Promise.all([
+          loadMessages(state.activeConversationId),
+          loadNotes(state.activeConversationId)
+        ]);
+      } else {
+        state.messages = [];
+        state.notes = [];
+        renderMessages();
+        renderNotes();
+      }
+    }
+
+    async function updateConversationStatus(conversationId, status) {
+      const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+
+      if (response.status === 401) {
+        redirectToLogin();
+        return false;
+      }
+
+      if (!response.ok) {
+        const payload = await readJsonSafe(response);
+        throw new Error(payload?.error || 'Falha ao atualizar status da conversa.');
+      }
+
+      return true;
+    }
+
+    async function openConversation(conversationId, markRead = false) {
+      state.activeConversationId = conversationId;
+      const selectedConversation = state.conversations.find((item) => item.id === conversationId) || null;
+
+      if (selectedConversation && selectedConversation.status !== 'open') {
+        await updateConversationStatus(conversationId, 'open');
+      }
+
+      if (markRead) {
+        await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST' });
+      }
+
+      await Promise.all([
+        loadStats(),
+        loadConversations()
+      ]);
+
+      if (state.activeConversationId) {
+        await Promise.all([
+          loadMessages(state.activeConversationId),
+          loadNotes(state.activeConversationId)
+        ]);
+      }
+    }
+
+    async function createConversation() {
+      const to = newConversationNumber.value.trim();
+      if (!to) {
+        alert('Informe o número do cliente.');
+        return;
+      }
+
+      const response = await fetch('/api/attendance/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to,
+          contactName: newConversationName.value.trim() || undefined
+        })
+      });
+
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      const payload = await readJsonSafe(response);
+      if (!response.ok) {
+        alert(payload?.error || 'Falha ao criar conversa.');
+        return;
+      }
+
+      newConversationModal.hide();
+      newConversationNumber.value = '';
+      newConversationName.value = '';
+      await Promise.all([loadStats(), loadConversations()]);
+      if (payload?.id) {
+        await openConversation(payload.id, false);
+      }
+    }
+
+    async function sendReply() {
+      if (!state.activeConversationId) return;
+      if (state.pendingComposerMedia?.file) {
+        await sendMediaReply(state.pendingComposerMedia.file, state.pendingComposerMedia.kind);
+        return;
+      }
+      const message = replyMessage.value.trim();
+      if (!message) {
+        alert('Digite uma resposta antes de enviar.');
+        return;
+      }
+      const conversationId = state.activeConversationId;
+      const agentName = replyAgentName.value.trim() || state.activeConversation?.assignedAgent || '';
+      const optimisticId = appendOptimisticMessage(message, agentName);
+      replyMessage.value = '';
+
+      void (async () => {
+        try {
+          const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message,
+              agentName: agentName || undefined
+            })
+          });
+
+          if (response.status === 401) {
+            redirectToLogin();
+            return;
+          }
+
+          const payload = await readJsonSafe(response);
+          if (!response.ok) {
+            throw new Error(payload?.error || 'Falha ao enviar resposta.');
+          }
+
+          updateOptimisticMessage(optimisticId, {
+            clientStatus: 'sent',
+            id: payload?.id || optimisticId,
+            waMessageId: payload?.waMessageId || null,
+            createdAt: payload?.createdAt || new Date().toISOString()
+          });
+          await refreshConversationAfterSend(conversationId);
+        } catch (error) {
+          console.error(error);
+          updateOptimisticMessage(optimisticId, {
+            clientStatus: 'failed'
+          });
+          showComposerToast(error?.message || 'Falha ao enviar mensagem.', 'error');
+        }
+      })();
+    }
+
+    async function sendMediaReply(file, forcedKind) {
+      if (!state.activeConversationId || !file) return;
+      const conversationId = state.activeConversationId;
+      const pendingSnapshot = state.pendingComposerMedia?.file === file ? state.pendingComposerMedia : null;
+
+      const formData = new FormData();
+      formData.append('file', file, file.name || 'arquivo');
+      if (forcedKind) {
+        formData.append('kind', forcedKind);
+      }
+
+      const caption = replyMessage.value.trim();
+      const agentName = replyAgentName.value.trim();
+      const kind = inferOutgoingMediaKind(file, forcedKind);
+      const previewUrl = kind === 'image' || kind === 'video' || kind === 'audio'
+        ? URL.createObjectURL(file)
+        : null;
+      const optimisticId = appendOptimisticMediaMessage({
+        messageType: kind,
+        messageText: buildOptimisticMediaText(kind, caption, file.name || 'arquivo'),
+        mediaUrl: previewUrl,
+        agentName
+      });
+      if (caption) {
+        formData.append('caption', caption);
+      }
+      if (agentName) {
+        formData.append('agentName', agentName);
+      }
+
+      replyMessage.value = '';
+      if (pendingSnapshot) {
+        state.pendingComposerMedia = null;
+        renderComposerMediaPreview();
+      }
+      try {
+        const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(conversationId)}/media`, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+
+        const payload = await readJsonSafe(response);
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Falha ao enviar arquivo.');
+        }
+
+        updateOptimisticMessage(optimisticId, {
+          clientStatus: 'sent',
+          id: payload?.id || optimisticId,
+          mediaUrl: payload?.mediaUrl || previewUrl,
+          waMessageId: payload?.waMessageId || null,
+          createdAt: payload?.createdAt || new Date().toISOString()
+        });
+        await refreshConversationAfterSend(conversationId);
+      } catch (error) {
+        console.error(error);
+        updateOptimisticMessage(optimisticId, {
+          clientStatus: 'failed'
+        });
+        if (pendingSnapshot) {
+          restorePendingComposerMedia(pendingSnapshot);
+        }
+        showComposerToast(error?.message || 'Falha ao enviar arquivo.', 'error');
+        throw error;
+      } finally {
+        mediaFileInput.value = '';
+      }
+    }
+
+    async function startAudioRecording() {
+      if (!state.activeConversationId) return;
+      if (typeof navigator.mediaDevices?.getUserMedia !== 'function' || typeof MediaRecorder === 'undefined') {
+        alert('Seu navegador não suporta gravação de áudio.');
+        return;
+      }
+
+      const mimeType = detectSupportedAudioMimeType();
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        state.mediaRecorder = recorder;
+        state.mediaRecorderMimeType = mimeType || recorder.mimeType || 'audio/webm';
+        state.mediaRecorderChunks = [];
+        state.mediaRecorderStream = stream;
+
+        recorder.addEventListener('dataavailable', (event) => {
+          if (event.data?.size) {
+            state.mediaRecorderChunks.push(event.data);
+          }
+        });
+
+        recorder.addEventListener('stop', async () => {
+          const blob = new Blob(state.mediaRecorderChunks, { type: state.mediaRecorderMimeType || 'audio/webm' });
+          state.mediaRecorder = null;
+          state.mediaRecorderChunks = [];
+          stopMediaRecorderTracks();
+          setRecordingState(false);
+
+          if (!blob.size) {
+            return;
+          }
+
+          const extension = blob.type.includes('ogg') ? 'ogg' : 'webm';
+          const file = new File([blob], `audio-${Date.now()}.${extension}`, {
+            type: blob.type || 'audio/webm'
+          });
+          await sendMediaReply(file, 'audio');
+        });
+
+        recorder.start();
+        setRecordingState(true);
+      } catch (error) {
+        console.error(error);
+        stopMediaRecorderTracks();
+        setRecordingState(false);
+        alert('Não foi possível iniciar a gravação de áudio.');
+      }
+    }
+
+    async function toggleAudioRecording() {
+      if (!state.recordingActive) {
+        await startAudioRecording();
+        return;
+      }
+
+      try {
+        state.mediaRecorder?.stop();
+      } catch (error) {
+        console.error(error);
+        stopMediaRecorderTracks();
+        state.mediaRecorder = null;
+        state.mediaRecorderChunks = [];
+        setRecordingState(false);
+      }
+    }
+
+    function openScheduleComposer() {
+      if (!state.activeConversationId) return;
+      scheduleMessageText.value = replyMessage.value.trim();
+      scheduleCreatedBy.value = replyAgentName.value.trim();
+      scheduleMessageAt.value = buildDefaultScheduleDate();
+      scheduleMessageModal.show();
+    }
+
+    async function createScheduledMessage() {
+      if (!state.activeConversationId) return;
+      const message = scheduleMessageText.value.trim();
+      const scheduledAt = scheduleMessageAt.value.trim();
+
+      if (!message) {
+        alert('Digite a mensagem do agendamento.');
+        return;
+      }
+
+      if (!scheduledAt) {
+        alert('Informe a data e o horário do agendamento.');
+        return;
+      }
+
+      showLoader();
+      try {
+        const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(state.activeConversationId)}/schedule`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message,
+            scheduledAt: appLocalInputToIso(scheduledAt),
+            createdBy: scheduleCreatedBy.value.trim() || replyAgentName.value.trim() || undefined
+          })
+        });
+
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+
+        const payload = await readJsonSafe(response);
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Falha ao criar agendamento.');
+        }
+
+        scheduleMessageModal.hide();
+        alert(`Mensagem agendada para ${formatDateTime(payload?.scheduledAt || scheduledAt)}.`);
+      } finally {
+        hideLoader();
+      }
+    }
+
+    async function saveConversationMeta() {
+      if (!state.activeConversationId) return;
+
+      const assignResponse = await fetch(`/api/attendance/conversations/${encodeURIComponent(state.activeConversationId)}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assignedAgent: assignedAgentInput.value.trim() || null
+        })
+      });
+
+      if (assignResponse.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (!assignResponse.ok) {
+        const payload = await readJsonSafe(assignResponse);
+        alert(payload?.error || 'Falha ao salvar o atendente.');
+        return;
+      }
+
+      const statusResponse = await fetch(`/api/attendance/conversations/${encodeURIComponent(state.activeConversationId)}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: conversationStatusSelect.value
+        })
+      });
+
+      if (statusResponse.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (!statusResponse.ok) {
+        const payload = await readJsonSafe(statusResponse);
+        alert(payload?.error || 'Falha ao salvar o status.');
+        return;
+      }
+
+      await Promise.all([loadStats(), loadConversations()]);
+      await Promise.all([
+        loadMessages(state.activeConversationId),
+        loadNotes(state.activeConversationId)
+      ]);
+    }
+
+    async function saveTags() {
+      if (!state.activeConversationId) return;
+
+      const tags = conversationTagsInput.value
+        .split(/[,\n;]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(state.activeConversationId)}/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags })
+      });
+
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      const payload = await readJsonSafe(response);
+      if (!response.ok) {
+        alert(payload?.error || 'Falha ao salvar tags.');
+        return;
+      }
+
+      await loadConversations();
+      await loadMessages(state.activeConversationId);
+    }
+
+    async function saveNote() {
+      if (!state.activeConversationId) return;
+      if (!noteText.value.trim()) {
+        alert('Digite a nota interna antes de salvar.');
+        return;
+      }
+
+      const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(state.activeConversationId)}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          noteText: noteText.value.trim(),
+          createdBy: noteAuthorInput.value.trim() || replyAgentName.value.trim() || undefined
+        })
+      });
+
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      const payload = await readJsonSafe(response);
+      if (!response.ok) {
+        alert(payload?.error || 'Falha ao salvar nota.');
+        return;
+      }
+
+      noteText.value = '';
+      await loadNotes(state.activeConversationId);
+    }
+
+    async function concludeConversation() {
+      if (!state.activeConversationId) return;
+
+      const conversationId = state.activeConversationId;
+      await updateConversationStatus(conversationId, 'closed');
+
+      await Promise.all([loadStats(), loadConversations()]);
+      if (state.activeConversationId === conversationId) {
+        state.activeConversationId = null;
+        state.activeConversation = null;
+        state.messages = [];
+        state.notes = [];
+        renderMessages();
+        renderDetails();
+      }
+    }
+
+    function scheduleRealtimeRefresh(eventConversationId) {
+      if (state.refreshTimer) {
+        clearTimeout(state.refreshTimer);
+      }
+
+      state.refreshTimer = setTimeout(async () => {
+        try {
+          await Promise.all([loadStats(), loadConversations()]);
+          const targetConversationId = state.activeConversationId;
+          if (targetConversationId && (!eventConversationId || targetConversationId === eventConversationId)) {
+            await Promise.all([
+              loadMessages(targetConversationId),
+              loadNotes(targetConversationId)
+            ]);
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      }, 250);
+    }
+
+    function connectRealtime() {
+      if (typeof window.EventSource !== 'function') {
+        setRealtimeState(false, 'Sem suporte SSE');
+        return;
+      }
+
+      if (state.eventSource) {
+        state.eventSource.close();
+        state.eventSource = null;
+      }
+
+      const source = new EventSource('/api/attendance/stream');
+      state.eventSource = source;
+
+      source.onopen = () => {
+        setRealtimeState(true, 'Tempo real ativo');
+      };
+
+      source.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          scheduleRealtimeRefresh(payload?.conversationId || null);
+        } catch (error) {
+          console.error(error);
+        }
+      };
+
+      source.onerror = () => {
+        setRealtimeState(false, 'Reconectando...');
+        if (source.readyState === EventSource.CLOSED) {
+          source.close();
+          state.eventSource = null;
+          window.setTimeout(() => {
+            if (!state.eventSource) {
+              connectRealtime();
+            }
+          }, 2000);
+        }
+      };
+    }
+
+    async function initialize() {
+      showLoader();
+      try {
+        enableHorizontalDragScroll(document.getElementById('status-pills'));
+        await loadStatus();
+        await Promise.all([loadStats(), loadConversations()]);
+        if (state.activeConversationId) {
+          await Promise.all([
+            loadMessages(state.activeConversationId),
+            loadNotes(state.activeConversationId)
+          ]);
+        } else {
+          renderMessages();
+          renderDetails();
+        }
+        connectRealtime();
+      } catch (error) {
+        console.error(error);
+        alert('Falha ao carregar a central de atendimento.');
+        setRealtimeState(false, 'Falha ao iniciar');
+      } finally {
+        hideLoader();
+      }
+    }
+
+    conversationSearch.addEventListener('input', async () => {
+      refreshConversationView();
+    });
+
+    statusPills.forEach((button) => {
+      button.addEventListener('click', async () => {
+        state.filterStatus = button.dataset.status || '';
+        statusPills.forEach((item) => item.classList.toggle('active', item === button));
+        refreshConversationView();
+      });
+    });
+
+    newConversationBtn.addEventListener('click', () => {
+      if (!state.attendanceEnabled) {
+        alert('Ative o módulo de atendimento para criar conversas.');
+        return;
+      }
+      newConversationModal.show();
+    });
+
+    toolbarNewConversationBtn?.addEventListener('click', () => {
+      newConversationBtn.click();
+    });
+
+    createConversationBtn.addEventListener('click', async () => {
+      await createConversation();
+    });
+
+    attachFileBtn.addEventListener('click', () => {
+      if (!state.activeConversationId) return;
+      mediaFileInput.click();
+    });
+
+    toolbarAttachFileBtn?.addEventListener('click', () => {
+      if (!state.activeConversationId) return;
+      attachFileBtn.click();
+    });
+
+    mediaFileInput.addEventListener('change', async () => {
+      const file = mediaFileInput.files?.[0];
+      if (!file) return;
+      closeEmojiPanel();
+      stageComposerMedia(file);
+    });
+
+    composerAttachmentRemove?.addEventListener('click', () => {
+      removePendingComposerMedia();
+      mediaFileInput.value = '';
+      replyMessage.focus();
+    });
+
+    emojiToggleBtn.addEventListener('click', () => {
+      if (!state.activeConversationId) return;
+      toggleEmojiPanel();
+    });
+
+    Array.from(document.querySelectorAll('[data-emoji]')).forEach((button) => {
+      button.addEventListener('click', () => {
+        insertTextAtCursor(replyMessage, button.getAttribute('data-emoji') || '');
+        closeEmojiPanel();
+      });
+    });
+
+    emojiPickerElement?.addEventListener('emoji-click', (event) => {
+      const emoji = event?.detail?.unicode || '';
+      if (!emoji) return;
+      insertTextAtCursor(replyMessage, emoji);
+      closeEmojiPanel();
+    });
+
+    scheduleMessageBtn.addEventListener('click', () => {
+      openScheduleComposer();
+    });
+
+    toolbarScheduleBtn?.addEventListener('click', () => {
+      if (!state.activeConversationId) return;
+      scheduleMessageBtn.click();
+    });
+
+    confirmScheduleBtn.addEventListener('click', async () => {
+      try {
+        await createScheduledMessage();
+      } catch (error) {
+        console.error(error);
+        alert(error.message || 'Falha ao criar agendamento.');
+      }
+    });
+
+    recordAudioBtn.addEventListener('click', async () => {
+      await toggleAudioRecording();
+    });
+
+    sendReplyBtn.addEventListener('click', async () => {
+      await sendReply();
+    });
+
+    replyMessage.addEventListener('keydown', async (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        if (!sendReplyBtn.disabled) {
+          await sendReply();
+        }
+      }
+    });
+
+    replyMessage.addEventListener('paste', (event) => {
+      if (!state.activeConversationId) return;
+
+      const items = Array.from(event.clipboardData?.items || []);
+      const fileItem = items.find((item) => item.kind === 'file');
+      if (!fileItem) {
+        return;
+      }
+
+      const clipboardFile = fileItem.getAsFile();
+      if (!clipboardFile) {
+        return;
+      }
+
+      event.preventDefault();
+      closeEmojiPanel();
+      stageComposerMedia(clipboardFile);
+    });
+
+    markReadBtn.addEventListener('click', async () => {
+      if (!state.activeConversationId) return;
+      if (await askConversationCloseConfirmation()) {
+        await concludeConversation();
+      }
+    });
+
+    openDetailsBtn.addEventListener('click', () => {
+      if (state.activeConversationId) {
+        openDrawer();
+      }
+    });
+
+    toolbarDetailsBtn?.addEventListener('click', () => {
+      if (state.activeConversationId) {
+        openDrawer();
+      }
+    });
+
+    toolbarSettingsBtn?.addEventListener('click', () => {
+      if (state.activeConversationId) {
+        openDrawer();
+      }
+    });
+
+    closeDetailsBtn.addEventListener('click', closeDrawer);
+    drawerScrim.addEventListener('click', closeDrawer);
+
+    saveAssignmentBtn.addEventListener('click', async () => {
+      await saveConversationMeta();
+    });
+
+    saveTagsBtn.addEventListener('click', async () => {
+      await saveTags();
+    });
+
+    saveNoteBtn.addEventListener('click', async () => {
+      await saveNote();
+    });
+
+    logoutBtn.addEventListener('click', async (event) => {
+      event.preventDefault();
+      try {
+        if (state.recordingActive) {
+          state.mediaRecorder?.stop();
+        }
+        await fetch('/logout', { method: 'POST' });
+      } finally {
+        if (state.eventSource) {
+          state.eventSource.close();
+          state.eventSource = null;
+        }
+        redirectToLogin();
+      }
+    });
+
+    toolbarLogoutBtn?.addEventListener('click', async (event) => {
+      event.preventDefault();
+      logoutBtn.click();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!emojiPanel.contains(event.target) && !emojiToggleBtn.contains(event.target)) {
+        closeEmojiPanel();
+      }
+    });
+
+    chatBody.addEventListener('click', (event) => {
+      const trigger = event.target.closest('.message-media-zoom');
+      if (!trigger) return;
+      openImagePreview(trigger.getAttribute('data-image-src') || '', trigger.getAttribute('data-image-alt') || 'Imagem');
+    });
+
+    document.getElementById('imagePreviewModal').addEventListener('hidden.bs.modal', () => {
+      imagePreviewFull.src = '';
+      imagePreviewDownload.href = '#';
+    });
+
+    document.getElementById('conversationOpenConfirmModal').addEventListener('hidden.bs.modal', () => {
+      if (state.pendingConversationOpen) {
+        state.pendingConversationOpen.resolve(false);
+        state.pendingConversationOpen = null;
+      }
+      if (state.pendingConversationClose) {
+        state.pendingConversationClose.resolve(false);
+        state.pendingConversationClose = null;
+      }
+    });
+
+    confirmOpenConversationBtn.addEventListener('click', () => {
+      const pendingOpen = state.pendingConversationOpen;
+      const pendingClose = state.pendingConversationClose;
+      state.pendingConversationOpen = null;
+      state.pendingConversationClose = null;
+      conversationOpenConfirmModal.hide();
+      pendingOpen?.resolve(true);
+      pendingClose?.resolve(true);
+    });
+
+    initialize();
+  </script>
+</body>
+
+</html>
