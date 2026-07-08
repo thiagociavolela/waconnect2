@@ -539,7 +539,10 @@
       mediaRecorderStream: null,
       pendingConversationOpen: null,
       pendingConversationClose: null,
-      localMessageSeq: 0
+      localMessageSeq: 0,
+      conversationSnapshotReady: false,
+      audioContext: null,
+      audioUnlocked: false
     };
 
     function showLoader() {
@@ -648,6 +651,85 @@
       }
 
       return items.filter((item) => item.status === state.filterStatus);
+    }
+
+    function ensureNotificationAudioContext() {
+      if (state.audioContext) {
+        return state.audioContext;
+      }
+
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        return null;
+      }
+
+      state.audioContext = new AudioContextClass();
+      return state.audioContext;
+    }
+
+    async function unlockNotificationAudio() {
+      const audioContext = ensureNotificationAudioContext();
+      if (!audioContext) {
+        state.audioUnlocked = false;
+        return;
+      }
+
+      if (audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      state.audioUnlocked = audioContext.state === 'running';
+    }
+
+    function playIncomingMessageNotification() {
+      const audioContext = ensureNotificationAudioContext();
+      if (!audioContext || !state.audioUnlocked) {
+        return;
+      }
+
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, now);
+      oscillator.frequency.exponentialRampToValueAtTime(660, now + 0.18);
+
+      gainNode.gain.setValueAtTime(0.0001, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.24);
+    }
+
+    function shouldPlayIncomingMessageNotification(previousItems, nextItems) {
+      if (!state.conversationSnapshotReady) {
+        return false;
+      }
+
+      const previousById = new Map((previousItems || []).map((item) => [item.id, item]));
+
+      return (nextItems || []).some((item) => {
+        if (item?.lastMessageDirection !== 'inbound') {
+          return false;
+        }
+
+        const previous = previousById.get(item.id);
+        if (!previous) {
+          return Boolean(item.lastMessageAt);
+        }
+
+        const unreadIncreased = Number(item.unreadCount || 0) > Number(previous.unreadCount || 0);
+        const messageChanged = item.lastMessageAt && item.lastMessageAt !== previous.lastMessageAt;
+        return unreadIncreased || Boolean(messageChanged);
+      });
     }
 
     function renderFilterCounts(items) {
@@ -1120,7 +1202,7 @@
 
       state.messages = [...state.messages, optimisticMessage];
       updateConversationLocally(conversationId, {
-        status: 'waiting_customer',
+        status: 'open',
         assignedAgent: agentName || state.activeConversation?.assignedAgent || null,
         lastMessageText: messageText,
         lastMessageDirection: 'outbound',
@@ -1152,7 +1234,7 @@
 
       state.messages = [...state.messages, optimisticMessage];
       updateConversationLocally(conversationId, {
-        status: 'waiting_customer',
+        status: 'open',
         assignedAgent: agentName || state.activeConversation?.assignedAgent || null,
         lastMessageText: messageText,
         lastMessageDirection: 'outbound',
@@ -1476,10 +1558,11 @@
       state.stats = await response.json();
     }
 
-    async function loadConversations() {
+    async function loadConversations(options = {}) {
       if (!state.attendanceEnabled) {
         state.allConversations = [];
         state.conversations = [];
+        state.conversationSnapshotReady = false;
         renderFilterCounts([]);
         renderConversations();
         return;
@@ -1502,8 +1585,18 @@
         return;
       }
 
-      state.allConversations = await response.json();
+      const previousConversations = state.allConversations;
+      const nextConversations = await response.json();
+      const shouldNotify =
+        options.playNotification &&
+        shouldPlayIncomingMessageNotification(previousConversations, nextConversations);
+
+      state.allConversations = nextConversations;
+      state.conversationSnapshotReady = true;
       refreshConversationView();
+      if (shouldNotify) {
+        playIncomingMessageNotification();
+      }
     }
 
     async function loadMessages(conversationId) {
@@ -2059,14 +2152,18 @@
       }
     }
 
-    function scheduleRealtimeRefresh(eventConversationId) {
+    function scheduleRealtimeRefresh(eventPayload) {
       if (state.refreshTimer) {
         clearTimeout(state.refreshTimer);
       }
 
       state.refreshTimer = setTimeout(async () => {
         try {
-          await Promise.all([loadStats(), loadConversations()]);
+          await Promise.all([
+            loadStats(),
+            loadConversations({ playNotification: eventPayload?.type === 'message' })
+          ]);
+          const eventConversationId = eventPayload?.conversationId || null;
           const targetConversationId = state.activeConversationId;
           if (targetConversationId && (!eventConversationId || targetConversationId === eventConversationId)) {
             await Promise.all([
@@ -2101,7 +2198,7 @@
       source.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          scheduleRealtimeRefresh(payload?.conversationId || null);
+          scheduleRealtimeRefresh(payload);
         } catch (error) {
           console.error(error);
         }
@@ -2335,6 +2432,14 @@
       if (!emojiPanel.contains(event.target) && !emojiToggleBtn.contains(event.target)) {
         closeEmojiPanel();
       }
+    });
+
+    document.addEventListener('pointerdown', () => {
+      void unlockNotificationAudio();
+    }, { passive: true });
+
+    document.addEventListener('keydown', () => {
+      void unlockNotificationAudio();
     });
 
     chatBody.addEventListener('click', (event) => {

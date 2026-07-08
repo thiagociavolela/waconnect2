@@ -560,7 +560,7 @@ export class AttendanceModule {
 
     await pool.execute<ResultSetHeader>(
       `UPDATE attendance_conversations
-          SET status = 'waiting_customer',
+          SET status = ?,
               assigned_agent = COALESCE(?, assigned_agent),
               last_message_text = ?,
               last_message_direction = 'outbound',
@@ -569,7 +569,7 @@ export class AttendanceModule {
               unread_count = 0,
               updated_at = ?
         WHERE id = ?`,
-      [agentName, message, nowDb, nowDb, conversation.id]
+      [resolveOutboundConversationStatus(conversation.status), agentName, message, nowDb, nowDb, conversation.id]
     );
 
     const inserted = await this.getMessageById(messageId);
@@ -638,7 +638,7 @@ export class AttendanceModule {
 
     await pool.execute<ResultSetHeader>(
       `UPDATE attendance_conversations
-          SET status = 'waiting_customer',
+          SET status = ?,
               assigned_agent = COALESCE(?, assigned_agent),
               last_message_text = ?,
               last_message_direction = 'outbound',
@@ -647,7 +647,7 @@ export class AttendanceModule {
               unread_count = 0,
               updated_at = ?
         WHERE id = ?`,
-      [agentName, previewText, kind, nowDb, nowDb, conversation.id]
+      [resolveOutboundConversationStatus(conversation.status), agentName, previewText, kind, nowDb, nowDb, conversation.id]
     );
 
     const inserted = await this.getMessageById(messageId);
@@ -1169,6 +1169,10 @@ function resolveInboundConversationStatus(
   }
 
   return assignedAgent ? "open" : "new";
+}
+
+function resolveOutboundConversationStatus(_currentStatus: AttendanceConversationStatus): AttendanceConversationStatus {
+  return "open";
 }
 
 function parseTags(value: string | null): string[] {
