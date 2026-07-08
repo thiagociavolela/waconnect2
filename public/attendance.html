@@ -298,7 +298,6 @@
           <select class="soft-select" id="conversation-status-select" disabled>
             <option value="new">Nova</option>
             <option value="open">Aberta</option>
-            <option value="waiting_customer">Aguardando cliente</option>
             <option value="waiting_agent">Aguardando equipe</option>
             <option value="closed">Encerrada</option>
           </select>
@@ -593,7 +592,6 @@
     function statusLabel(status) {
       if (status === 'new') return 'Pendente';
       if (status === 'open') return 'Aberto';
-      if (status === 'waiting_customer') return 'Cliente';
       if (status === 'waiting_agent') return 'Equipe';
       if (status === 'closed') return 'Concluído';
       return status || '---';

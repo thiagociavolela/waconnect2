@@ -6,7 +6,7 @@ import path from "path";
 import { APP_TIMEZONE_OFFSET, appDateTimeToMysql, mysqlAppToIso, nowApp } from "./timezone";
 import { IncomingWhatsAppMessage, MediaKind, WhatsAppService } from "./whatsapp";
 
-export type AttendanceConversationStatus = "new" | "open" | "waiting_customer" | "waiting_agent" | "closed";
+export type AttendanceConversationStatus = "new" | "open" | "waiting_agent" | "closed";
 export type AttendanceMessageDirection = "inbound" | "outbound";
 export type AttendanceMessageType = "text" | "image" | "video" | "audio" | "document" | "sticker" | "unknown";
 
@@ -98,7 +98,6 @@ export interface AttendanceStats {
   total: number;
   newCount: number;
   openCount: number;
-  waitingCustomerCount: number;
   waitingAgentCount: number;
   closedCount: number;
   unreadTotal: number;
@@ -109,7 +108,6 @@ export interface AttendanceAgentSummary {
   total: number;
   newCount: number;
   openCount: number;
-  waitingCustomerCount: number;
   waitingAgentCount: number;
   closedCount: number;
   unreadTotal: number;
@@ -126,7 +124,7 @@ interface AttendanceConversationRow extends RowDataPacket {
   contact_jid: string;
   contact_number: string;
   contact_name: string | null;
-  status: AttendanceConversationStatus;
+  status: string;
   assigned_agent: string | null;
   tags_json: string | null;
   last_message_text: string | null;
@@ -162,7 +160,6 @@ interface AttendanceStatsRow extends RowDataPacket {
   total: number | string | null;
   new_count: number | string | null;
   open_count: number | string | null;
-  waiting_customer_count: number | string | null;
   waiting_agent_count: number | string | null;
   closed_count: number | string | null;
   unread_total: number | string | null;
@@ -173,7 +170,6 @@ interface AttendanceAgentSummaryRow extends RowDataPacket {
   total: number | string | null;
   new_count: number | string | null;
   open_count: number | string | null;
-  waiting_customer_count: number | string | null;
   waiting_agent_count: number | string | null;
   closed_count: number | string | null;
   unread_total: number | string | null;
@@ -300,6 +296,8 @@ export class AttendanceModule {
       await this.pool.execute(CREATE_ATTENDANCE_NOTES_TABLE_SQL);
       await this.ensureOptionalSchema();
     }
+
+    await this.migrateLegacyStatuses();
 
     this.unsubscribeIncoming = this.whatsapp.onIncomingMessage((message) => {
       void this.handleIncomingMessage(message);
@@ -711,7 +709,6 @@ export class AttendanceModule {
         COUNT(*) AS total,
         SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS new_count,
         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
-        SUM(CASE WHEN status = 'waiting_customer' THEN 1 ELSE 0 END) AS waiting_customer_count,
         SUM(CASE WHEN status = 'waiting_agent' THEN 1 ELSE 0 END) AS waiting_agent_count,
         SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_count,
         SUM(unread_count) AS unread_total
@@ -730,7 +727,6 @@ export class AttendanceModule {
         COUNT(*) AS total,
         SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS new_count,
         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
-        SUM(CASE WHEN status = 'waiting_customer' THEN 1 ELSE 0 END) AS waiting_customer_count,
         SUM(CASE WHEN status = 'waiting_agent' THEN 1 ELSE 0 END) AS waiting_agent_count,
         SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_count,
         SUM(unread_count) AS unread_total
@@ -746,7 +742,6 @@ export class AttendanceModule {
       total: numericCell(row.total),
       newCount: numericCell(row.new_count),
       openCount: numericCell(row.open_count),
-      waitingCustomerCount: numericCell(row.waiting_customer_count),
       waitingAgentCount: numericCell(row.waiting_agent_count),
       closedCount: numericCell(row.closed_count),
       unreadTotal: numericCell(row.unread_total)
@@ -908,6 +903,13 @@ export class AttendanceModule {
     await ensureColumn(pool, "attendance_conversations", "tags_json", "ALTER TABLE attendance_conversations ADD COLUMN tags_json JSON NULL AFTER assigned_agent");
   }
 
+  private async migrateLegacyStatuses() {
+    const pool = this.requirePool();
+    await pool.execute<ResultSetHeader>(
+      "UPDATE attendance_conversations SET status = 'open' WHERE status = 'waiting_customer'"
+    );
+  }
+
   private async touchConversation(conversationId: string, nowDb = appDateTimeToMysql(nowApp())) {
     const pool = this.requirePool();
     await pool.execute<ResultSetHeader>(
@@ -955,7 +957,7 @@ function mapConversationRow(row: AttendanceConversationRow): AttendanceConversat
     contactNumber: row.contact_number,
     contactName: row.contact_name,
     profilePicUrl: null,
-    status: row.status,
+    status: normalizeConversationStatus(row.status),
     assignedAgent: row.assigned_agent,
     tags: parseTags(row.tags_json),
     lastMessageText: row.last_message_text,
@@ -997,7 +999,6 @@ function mapStatsRow(row: AttendanceStatsRow | undefined): AttendanceStats {
     total: numericCell(row?.total),
     newCount: numericCell(row?.new_count),
     openCount: numericCell(row?.open_count),
-    waitingCustomerCount: numericCell(row?.waiting_customer_count),
     waitingAgentCount: numericCell(row?.waiting_agent_count),
     closedCount: numericCell(row?.closed_count),
     unreadTotal: numericCell(row?.unread_total)
@@ -1160,10 +1161,6 @@ function resolveInboundConversationStatus(
     return "new";
   }
 
-  if (currentStatus === "waiting_customer") {
-    return assignedAgent ? "open" : "new";
-  }
-
   if (currentStatus === "waiting_agent") {
     return "waiting_agent";
   }
@@ -1173,6 +1170,17 @@ function resolveInboundConversationStatus(
 
 function resolveOutboundConversationStatus(_currentStatus: AttendanceConversationStatus): AttendanceConversationStatus {
   return "open";
+}
+
+function normalizeConversationStatus(value: string | null | undefined): AttendanceConversationStatus {
+  const normalized = value?.trim();
+  if (normalized === "waiting_customer") {
+    return "open";
+  }
+  if (normalized === "open" || normalized === "waiting_agent" || normalized === "closed") {
+    return normalized;
+  }
+  return "new";
 }
 
 function parseTags(value: string | null): string[] {

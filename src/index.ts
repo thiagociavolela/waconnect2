@@ -1334,7 +1334,7 @@ function parseEndpointStatsPeriod(value: unknown): EndpointStatsPeriod {
 function parseAttendanceStatus(value: unknown): AttendanceConversationStatus | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
   const normalized = value.trim();
-  const allowed: AttendanceConversationStatus[] = ["new", "open", "waiting_customer", "waiting_agent", "closed"];
+  const allowed: AttendanceConversationStatus[] = ["new", "open", "waiting_agent", "closed"];
   if (!allowed.includes(normalized as AttendanceConversationStatus)) {
     throw new AttendanceValidationError("Campo 'status' invalido.");
   }
