@@ -33,7 +33,7 @@ type CachedResponse = { status: number; body: unknown; expiresAt: number };
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SERVER_URL = process.env.SERVER_URL ?? `http://localhost:${PORT}`;
+const SERVER_URL = normalizeServerUrl(process.env.SERVER_URL);
 const DASH_USER = process.env.DASH_USER ?? "admin";
 const DASH_PASS = process.env.DASH_PASS ?? "admin123";
 const rawApiToken = process.env.API_TOKEN?.trim();
@@ -58,6 +58,7 @@ const rateWindowMs = 1000;
 const rateMax = 3;
 let rateTimestamps: number[] = [];
 
+app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -75,7 +76,7 @@ const swaggerOptions: SwaggerOptions = {
       version: "1.0.0",
       description: "Endpoints para controle da instância WhatsApp via Baileys."
     },
-    servers: [{ url: SERVER_URL }],
+    servers: [{ url: SERVER_URL ?? `http://localhost:${PORT}` }],
     components: {
       securitySchemes: {
         ApiToken: {
@@ -519,8 +520,16 @@ const swaggerOptions: SwaggerOptions = {
 
 const swaggerSpec = swaggerJSDoc(swaggerOptions);
 
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-app.get("/api-docs.json", (_req, res) => res.json(swaggerSpec));
+app.get("/api-docs.json", (req, res) => res.json(buildSwaggerSpec(req)));
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(undefined, {
+    swaggerOptions: {
+      url: "/api-docs.json"
+    }
+  })
+);
 
 function authGuard(req: Request, res: Response, next: () => void) {
   const headerToken =
@@ -1577,4 +1586,35 @@ function clearDashboardSessionCookie(res: Response) {
     secure: process.env.NODE_ENV === "production",
     path: "/"
   });
+}
+
+function buildSwaggerSpec(req: Request) {
+  return {
+    ...swaggerSpec,
+    servers: [{ url: resolveServerUrl(req) }]
+  };
+}
+
+function resolveServerUrl(req: Request): string {
+  if (SERVER_URL) {
+    return SERVER_URL;
+  }
+
+  const forwardedProto = req.header("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost = req.header("x-forwarded-host")?.split(",")[0]?.trim();
+  const protocol = forwardedProto || req.protocol;
+  const host = forwardedHost || req.get("host");
+
+  if (host) {
+    return `${protocol}://${host}`;
+  }
+
+  return `http://localhost:${PORT}`;
+}
+
+function normalizeServerUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  return normalized.replace(/\/+$/, "");
 }
