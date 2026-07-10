@@ -527,6 +527,13 @@ export class WhatsAppService {
     const messageType = detectIncomingMessageTypeFromContent(content);
     const mediaMetadata = readIncomingMediaMetadata(content);
     const mediaBuffer = await this.downloadIncomingMedia(message, messageType);
+    if (messageType === "unknown") {
+      console.warn("Mensagem recebida com formato nao mapeado no atendimento:", {
+        remoteJid,
+        waMessageId,
+        contentKeys: Object.keys(content)
+      });
+    }
 
     return {
       waMessageId,
@@ -564,12 +571,13 @@ function readNormalizedMessageContent(
   baileys: typeof import("@whiskeysockets/baileys"),
   message: WAMessage
 ): Record<string, unknown> {
-  const content = baileys.normalizeMessageContent(message.message);
+  const normalized = baileys.normalizeMessageContent(message.message);
+  const content = baileys.extractMessageContent(normalized) ?? normalized;
   return (content ?? {}) as Record<string, unknown>;
 }
 
 function detectIncomingMessageTypeFromContent(content: Record<string, unknown>): IncomingWhatsAppMessageType {
-  if (typeof content.conversation === "string" || readNestedText(content.extendedTextMessage)) return "text";
+  if (readIncomingTextBodyFromContent(content) || describeStructuredMessage(content)) return "text";
   if (content.imageMessage) return "image";
   if (content.videoMessage) return "video";
   if (content.audioMessage) return "audio";
@@ -580,11 +588,12 @@ function detectIncomingMessageTypeFromContent(content: Record<string, unknown>):
 
 function extractIncomingMessageTextFromContent(content: Record<string, unknown>): string | null {
   const candidates = [
-    typeof content.conversation === "string" ? content.conversation : null,
-    readNestedText(content.extendedTextMessage),
+    readIncomingTextBodyFromContent(content),
     readNestedCaption(content.imageMessage),
     readNestedCaption(content.videoMessage),
-    readNestedText(content.documentMessage)
+    readNestedCaption(content.documentMessage),
+    readNestedText(content.documentMessage),
+    describeStructuredMessage(content)
   ];
 
   for (const candidate of candidates) {
@@ -656,10 +665,158 @@ function readNestedText(value: unknown): string | null {
   return typeof record.text === "string" ? record.text : null;
 }
 
+function readNestedString(value: unknown, key: string): string | null {
+  const record = readNestedRecord(value);
+  if (!record) return null;
+  return typeof record[key] === "string" ? (record[key] as string) : null;
+}
+
 function readNestedCaption(value: unknown): string | null {
   const record = readNestedRecord(value);
   if (!record) return null;
   return typeof record.caption === "string" ? record.caption : null;
+}
+
+function readIncomingTextBodyFromContent(content: Record<string, unknown>): string | null {
+  const candidates = [
+    typeof content.conversation === "string" ? content.conversation : null,
+    readNestedText(content.extendedTextMessage),
+    readNestedString(content.buttonsResponseMessage, "selectedDisplayText"),
+    readNestedString(content.buttonsResponseMessage, "selectedButtonId"),
+    readNestedString(content.templateButtonReplyMessage, "selectedDisplayText"),
+    readNestedString(content.templateButtonReplyMessage, "selectedId"),
+    readListResponseText(content.listResponseMessage),
+    readInteractiveResponseText(content.interactiveResponseMessage)
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function readListResponseText(value: unknown): string | null {
+  const record = readNestedRecord(value);
+  if (!record) return null;
+
+  const candidates = [
+    typeof record.title === "string" ? record.title : null,
+    typeof record.description === "string" ? record.description : null,
+    readNestedString(record.singleSelectReply, "selectedRowId")
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function readInteractiveResponseText(value: unknown): string | null {
+  const record = readNestedRecord(value);
+  if (!record) return null;
+
+  const bodyText = readNestedText(record.body);
+  if (bodyText?.trim()) {
+    return bodyText.trim();
+  }
+
+  const nativeFlow = readNestedRecord(record.nativeFlowResponseMessage);
+  const paramsJson = nativeFlow && typeof nativeFlow.paramsJson === "string" ? nativeFlow.paramsJson.trim() : "";
+  if (paramsJson) {
+    const fromJson = readResponseTextFromJson(paramsJson);
+    if (fromJson) {
+      return fromJson;
+    }
+  }
+
+  const name = nativeFlow && typeof nativeFlow.name === "string" ? nativeFlow.name.trim() : "";
+  return name || null;
+}
+
+function readResponseTextFromJson(value: string): string | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return findPreferredString(parsed, ["display_text", "title", "text", "label", "id", "selected_id"]);
+  } catch {
+    return value.trim() || null;
+  }
+}
+
+function findPreferredString(value: unknown, keys: string[], depth = 0): string | null {
+  if (depth > 4 || value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findPreferredString(item, keys, depth + 1);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  if (typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  for (const nestedValue of Object.values(record)) {
+    const nested = findPreferredString(nestedValue, keys, depth + 1);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+function describeStructuredMessage(content: Record<string, unknown>): string | null {
+  if (content.contactMessage || content.contactsArrayMessage) {
+    return "[Contato recebido]";
+  }
+
+  if (content.locationMessage || content.liveLocationMessage) {
+    return "[Localizacao recebida]";
+  }
+
+  if (content.reactionMessage) {
+    const reaction = readNestedString(content.reactionMessage, "text");
+    return reaction?.trim() ? `[Reacao] ${reaction.trim()}` : "[Reacao recebida]";
+  }
+
+  if (content.encReactionMessage) {
+    return "[Reacao recebida]";
+  }
+
+  if (content.pollCreationMessage || content.pollCreationMessageV2 || content.pollCreationMessageV3) {
+    return "[Enquete recebida]";
+  }
+
+  if (content.pollUpdateMessage) {
+    return "[Resposta de enquete]";
+  }
+
+  if (content.placeholderMessage) {
+    return "[Mensagem indisponivel]";
+  }
+
+  return null;
 }
 
 function readNestedRecord(value: unknown): Record<string, unknown> | null {

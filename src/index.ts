@@ -633,6 +633,13 @@ app.post("/api/send/text", trackApiEndpoint("send_text"), async (req: Request, r
   try {
     const payload = clampedDelay !== undefined ? { to, message, delaySeconds: clampedDelay } : { to, message };
     const key = await whatsapp.sendText(payload);
+    if (attendanceModule.isEnabled()) {
+      try {
+        await attendanceModule.syncExternalTextMessage({ to, message, waMessageId: key?.id ?? null });
+      } catch (attendanceError) {
+        console.error("Falha ao sincronizar envio de texto no atendimento:", attendanceError);
+      }
+    }
     cacheIdem(idemKey, res, { success: true, key });
   } catch (err) {
     console.error(err);

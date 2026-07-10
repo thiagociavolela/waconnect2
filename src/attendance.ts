@@ -520,8 +520,21 @@ export class AttendanceModule {
     return conversation;
   }
 
+  async syncExternalTextMessage(input: { to: string; message: string; waMessageId?: string | null | undefined; agentName?: string | null | undefined }) {
+    const message = input.message?.trim();
+    if (!message) {
+      throw new AttendanceValidationError("Campo 'message' e obrigatorio.");
+    }
+
+    const conversation = await this.createOrOpenConversation({ to: input.to });
+    return this.persistOutboundTextMessage(conversation, {
+      message,
+      agentName: input.agentName,
+      waMessageId: input.waMessageId ?? null
+    });
+  }
+
   async sendReply(conversationId: string, input: AttendanceReplyInput): Promise<AttendanceMessageRecord> {
-    const pool = this.requirePool();
     const conversation = await this.getConversationById(conversationId);
     if (!conversation) {
       throw new AttendanceValidationError("Conversa nao encontrada.");
@@ -543,37 +556,11 @@ export class AttendanceModule {
         : { to: conversation.contactNumber, message };
 
     const key = await this.whatsapp.sendText(sendPayload);
-
-    const waMessageId = buildExternalMessageId(conversation.contactJid, key?.id);
-    const agentName = sanitizeOptional(input.agentName);
-    const messageId = crypto.randomUUID();
-    const nowDb = appDateTimeToMysql(nowApp());
-
-    await pool.execute<ResultSetHeader>(
-      `INSERT INTO attendance_messages (
-        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
-      ) VALUES (?, ?, 'outbound', 'text', ?, NULL, ?, ?, ?)`,
-      [messageId, conversation.id, message, waMessageId, agentName, nowDb]
-    );
-
-    await pool.execute<ResultSetHeader>(
-      `UPDATE attendance_conversations
-          SET status = ?,
-              assigned_agent = COALESCE(?, assigned_agent),
-              last_message_text = ?,
-              last_message_direction = 'outbound',
-              last_message_type = 'text',
-              last_message_at = ?,
-              unread_count = 0,
-              updated_at = ?
-        WHERE id = ?`,
-      [resolveOutboundConversationStatus(conversation.status), agentName, message, nowDb, nowDb, conversation.id]
-    );
-
-    const inserted = await this.getMessageById(messageId);
-    if (!inserted) throw new Error("Falha ao recarregar mensagem enviada.");
-    this.emitRealtime("message", conversation.id);
-    return inserted;
+    return this.persistOutboundTextMessage(conversation, {
+      message,
+      agentName: input.agentName,
+      waMessageId: key?.id
+    });
   }
 
   async sendMediaReply(conversationId: string, input: AttendanceMediaReplyInput): Promise<AttendanceMessageRecord> {
@@ -788,6 +775,50 @@ export class AttendanceModule {
     this.emitRealtime("message", conversation.id);
   }
 
+  private async persistOutboundTextMessage(
+    conversation: AttendanceConversationRecord,
+    input: { message: string; waMessageId?: string | null | undefined; agentName?: string | null | undefined }
+  ): Promise<AttendanceMessageRecord> {
+    const pool = this.requirePool();
+    const waMessageId = buildExternalMessageId(conversation.contactJid, input.waMessageId);
+    if (waMessageId) {
+      const existing = await this.getMessageByExternalId(waMessageId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    const agentName = sanitizeOptional(input.agentName ?? undefined);
+    const messageId = crypto.randomUUID();
+    const nowDb = appDateTimeToMysql(nowApp());
+
+    await pool.execute<ResultSetHeader>(
+      `INSERT INTO attendance_messages (
+        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
+      ) VALUES (?, ?, 'outbound', 'text', ?, NULL, ?, ?, ?)`,
+      [messageId, conversation.id, input.message, waMessageId, agentName, nowDb]
+    );
+
+    await pool.execute<ResultSetHeader>(
+      `UPDATE attendance_conversations
+          SET status = ?,
+              assigned_agent = COALESCE(?, assigned_agent),
+              last_message_text = ?,
+              last_message_direction = 'outbound',
+              last_message_type = 'text',
+              last_message_at = ?,
+              unread_count = 0,
+              updated_at = ?
+        WHERE id = ?`,
+      [resolveOutboundConversationStatus(conversation.status), agentName, input.message, nowDb, nowDb, conversation.id]
+    );
+
+    const inserted = await this.getMessageById(messageId);
+    if (!inserted) throw new Error("Falha ao recarregar mensagem enviada.");
+    this.emitRealtime("message", conversation.id);
+    return inserted;
+  }
+
   private async persistInboundMediaAsset(message: IncomingWhatsAppMessage): Promise<string | null> {
     const mediaKind = normalizeIncomingMediaKind(message.messageType);
     if (!mediaKind || !message.mediaBuffer?.length) {
@@ -873,6 +904,18 @@ export class AttendanceModule {
         WHERE id = ?
         LIMIT 1`,
       [id]
+    );
+    return rows[0] ? mapMessageRow(rows[0]) : null;
+  }
+
+  private async getMessageByExternalId(waMessageId: string): Promise<AttendanceMessageRecord | null> {
+    const pool = this.requirePool();
+    const [rows] = await pool.execute<AttendanceMessageRow[]>(
+      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
+         FROM attendance_messages
+        WHERE wa_message_id = ?
+        LIMIT 1`,
+      [waMessageId]
     );
     return rows[0] ? mapMessageRow(rows[0]) : null;
   }
