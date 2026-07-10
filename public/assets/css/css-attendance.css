@@ -168,6 +168,16 @@ a {
   color: #dffdf1;
 }
 
+.toolbar-icon-btn.is-on {
+  background: rgba(0, 168, 132, 0.14);
+  border-color: rgba(0, 168, 132, 0.22);
+  color: #dffdf1;
+}
+
+.toolbar-icon-btn.is-off {
+  color: #93a1aa;
+}
+
 .toolbar-indicator {
   position: absolute;
   top: 8px;

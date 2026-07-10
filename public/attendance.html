@@ -47,6 +47,10 @@
           <span class="toolbar-indicator" id="toolbar-realtime-dot"></span>
         </button>
 
+        <button type="button" class="toolbar-icon-btn" id="toolbar-audio-btn" title="Avisos sonoros ativados" aria-label="Avisos sonoros ativados">
+          <i class="bi bi-bell-fill"></i>
+        </button>
+
         <!--<button type="button" class="toolbar-icon-btn" id="toolbar-details-btn" title="Detalhes da conversa" aria-label="Detalhes da conversa">
           <i class="bi bi-layout-sidebar-inset"></i>
         </button>-->
@@ -432,10 +436,13 @@
 
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+  <audio id="notification-audio" preload="auto" src="/assets/audio/notification.mp3"></audio>
   <script>
     const LOGIN_PAGE = '/login.html';
     const APP_TIMEZONE = 'America/Sao_Paulo';
     const APP_TIMEZONE_OFFSET = '-03:00';
+    const AUDIO_NOTIFICATION_STORAGE_KEY = 'attendance-audio-notifications-enabled';
+    const NOTIFICATION_AUDIO_URL = '/assets/audio/notification.mp3';
     const loader = document.getElementById('loader');
     const composerToastStack = document.getElementById('composer-toast-stack');
     const logoutBtn = document.getElementById('logout-btn');
@@ -445,6 +452,8 @@
     const realtimeText = document.getElementById('realtime-text');
     const toolbarRealtimeBtn = document.getElementById('toolbar-realtime-btn');
     const toolbarRealtimeDot = document.getElementById('toolbar-realtime-dot');
+    const toolbarAudioBtn = document.getElementById('toolbar-audio-btn');
+    const notificationAudio = document.getElementById('notification-audio');
     const conversationSearch = document.getElementById('conversation-search');
     const conversationCounter = document.getElementById('conversation-counter');
     const conversationList = document.getElementById('conversation-list');
@@ -530,6 +539,8 @@
       pendingComposerMedia: null,
       eventSource: null,
       refreshTimer: null,
+      pendingRealtimeNotification: false,
+      pendingRealtimeConversationId: null,
       pendingProfilePictureIds: new Set(),
       recordingActive: false,
       mediaRecorder: null,
@@ -540,8 +551,14 @@
       pendingConversationClose: null,
       localMessageSeq: 0,
       conversationSnapshotReady: false,
+      audioNotificationsEnabled: readAudioNotificationPreference(),
       audioContext: null,
-      audioUnlocked: false
+      notificationAudioBuffer: null,
+      notificationAudioBufferPromise: null,
+      audioUnlocked: false,
+      audioElementUnlocked: false,
+      lastNotificationSignature: null,
+      lastNotificationPlayedAt: 0
     };
 
     function showLoader() {
@@ -621,6 +638,55 @@
       toolbarRealtimeDot?.classList.toggle('connected', connected);
     }
 
+    function readAudioNotificationPreference() {
+      try {
+        const rawValue = window.localStorage.getItem(AUDIO_NOTIFICATION_STORAGE_KEY);
+        if (rawValue === null) {
+          return true;
+        }
+        return rawValue === '1';
+      } catch {
+        return true;
+      }
+    }
+
+    function writeAudioNotificationPreference(enabled) {
+      try {
+        window.localStorage.setItem(AUDIO_NOTIFICATION_STORAGE_KEY, enabled ? '1' : '0');
+      } catch {
+        // noop
+      }
+    }
+
+    function syncAudioNotificationButton() {
+      if (!toolbarAudioBtn) {
+        return;
+      }
+
+      const enabled = Boolean(state.audioNotificationsEnabled);
+      toolbarAudioBtn.classList.toggle('is-on', enabled);
+      toolbarAudioBtn.classList.toggle('is-off', !enabled);
+      toolbarAudioBtn.title = enabled ? 'Avisos sonoros ativados' : 'Avisos sonoros desativados';
+      toolbarAudioBtn.setAttribute('aria-label', toolbarAudioBtn.title);
+
+      const icon = toolbarAudioBtn.querySelector('i');
+      if (icon) {
+        icon.className = enabled ? 'bi bi-bell-fill' : 'bi bi-bell-slash-fill';
+      }
+    }
+
+    function setAudioNotificationsEnabled(enabled, options = {}) {
+      const { persist = true } = options;
+      state.audioNotificationsEnabled = Boolean(enabled);
+      if (persist) {
+        writeAudioNotificationPreference(state.audioNotificationsEnabled);
+      }
+      syncAudioNotificationButton();
+      if (state.audioNotificationsEnabled) {
+        void primeNotificationAudio();
+      }
+    }
+
     function applyBaseConversationFilters(items) {
       const search = conversationSearch.value.trim().toLowerCase();
 
@@ -665,69 +731,192 @@
       return state.audioContext;
     }
 
-    async function unlockNotificationAudio() {
+    async function loadNotificationAudioBuffer() {
+      if (state.notificationAudioBuffer) {
+        return state.notificationAudioBuffer;
+      }
+
+      if (state.notificationAudioBufferPromise) {
+        return state.notificationAudioBufferPromise;
+      }
+
       const audioContext = ensureNotificationAudioContext();
       if (!audioContext) {
-        state.audioUnlocked = false;
-        return;
+        throw new Error('AudioContext não suportado neste navegador.');
       }
 
-      if (audioContext.state === 'suspended') {
-        try {
-          await audioContext.resume();
-        } catch (error) {
-          console.error(error);
-        }
-      }
+      state.notificationAudioBufferPromise = fetch(NOTIFICATION_AUDIO_URL, { cache: 'force-cache' })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Falha ao carregar MP3 de notificação: ${response.status}`);
+          }
 
-      state.audioUnlocked = audioContext.state === 'running';
+          const arrayBuffer = await response.arrayBuffer();
+          const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+          state.notificationAudioBuffer = decoded;
+          return decoded;
+        })
+        .finally(() => {
+          state.notificationAudioBufferPromise = null;
+        });
+
+      return state.notificationAudioBufferPromise;
     }
 
-    function playIncomingMessageNotification() {
-      const audioContext = ensureNotificationAudioContext();
-      if (!audioContext || !state.audioUnlocked) {
+    async function primeNotificationAudio() {
+      if (!state.audioNotificationsEnabled) {
+        state.audioUnlocked = false;
+        state.audioElementUnlocked = false;
         return;
       }
 
-      const now = audioContext.currentTime;
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      try {
+        const audioContext = ensureNotificationAudioContext();
+        if (!audioContext) {
+          state.audioUnlocked = false;
+          return;
+        }
 
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, now);
-      oscillator.frequency.exponentialRampToValueAtTime(660, now + 0.18);
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
 
-      gainNode.gain.setValueAtTime(0.0001, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+        await loadNotificationAudioBuffer();
+        state.audioUnlocked = audioContext.state === 'running' && Boolean(state.notificationAudioBuffer);
+      } catch (error) {
+        state.audioUnlocked = false;
+        console.error(error);
+      }
 
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start(now);
-      oscillator.stop(now + 0.24);
+      if (!notificationAudio) {
+        return;
+      }
+
+      try {
+        notificationAudio.pause();
+        notificationAudio.currentTime = 0;
+        notificationAudio.volume = 0.001;
+        await notificationAudio.play();
+        notificationAudio.pause();
+        notificationAudio.currentTime = 0;
+        notificationAudio.volume = 1;
+        state.audioElementUnlocked = true;
+      } catch (error) {
+        state.audioElementUnlocked = false;
+        notificationAudio.volume = 1;
+      }
+    }
+
+    function buildIncomingMessageNotificationSignature(item) {
+      return [
+        item?.id || '',
+        item?.lastMessageDirection || '',
+        item?.lastMessageAt || '',
+        Number(item?.unreadCount || 0)
+      ].join(':');
+    }
+
+    function playIncomingMessageNotificationWithAudioElement() {
+      if (!notificationAudio || !state.audioNotificationsEnabled || !state.audioElementUnlocked) {
+        return false;
+      }
+
+      try {
+        notificationAudio.pause();
+        notificationAudio.currentTime = 0;
+        notificationAudio.volume = 1;
+        const playPromise = notificationAudio.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch((error) => {
+            state.audioElementUnlocked = false;
+            console.error(error);
+          });
+        }
+        return true;
+      } catch (error) {
+        state.audioElementUnlocked = false;
+        console.error(error);
+        return false;
+      }
+    }
+
+    function playIncomingMessageNotification(signature) {
+      if (!state.audioNotificationsEnabled) {
+        return;
+      }
+
+      const playedAt = Date.now();
+      if (
+        signature &&
+        state.lastNotificationSignature === signature &&
+        playedAt - state.lastNotificationPlayedAt < 3000
+      ) {
+        return;
+      }
+
+      state.lastNotificationSignature = signature || null;
+      state.lastNotificationPlayedAt = playedAt;
+
+      const audioContext = ensureNotificationAudioContext();
+      try {
+        if (!audioContext || !state.audioUnlocked || !state.notificationAudioBuffer) {
+          const played = playIncomingMessageNotificationWithAudioElement();
+          if (!played) {
+            state.audioUnlocked = false;
+          }
+          return;
+        }
+
+        const source = audioContext.createBufferSource();
+        const gainNode = audioContext.createGain();
+        source.buffer = state.notificationAudioBuffer;
+        gainNode.gain.setValueAtTime(0.9, audioContext.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        source.start(0);
+      } catch (error) {
+        state.audioUnlocked = false;
+        console.error(error);
+        playIncomingMessageNotificationWithAudioElement();
+      }
     }
 
     function shouldPlayIncomingMessageNotification(previousItems, nextItems) {
       if (!state.conversationSnapshotReady) {
-        return false;
+        return null;
       }
 
       const previousById = new Map((previousItems || []).map((item) => [item.id, item]));
 
-      return (nextItems || []).some((item) => {
+      for (const item of nextItems || []) {
         if (item?.lastMessageDirection !== 'inbound') {
-          return false;
+          continue;
         }
 
         const previous = previousById.get(item.id);
         if (!previous) {
-          return Boolean(item.lastMessageAt);
+          if (item.lastMessageAt) {
+            return buildIncomingMessageNotificationSignature(item);
+          }
+          continue;
         }
 
         const unreadIncreased = Number(item.unreadCount || 0) > Number(previous.unreadCount || 0);
-        const messageChanged = item.lastMessageAt && item.lastMessageAt !== previous.lastMessageAt;
-        return unreadIncreased || Boolean(messageChanged);
-      });
+        const inboundMessageChanged =
+          item.lastMessageAt &&
+          item.lastMessageAt !== previous.lastMessageAt &&
+          previous.lastMessageDirection !== 'inbound';
+        const inboundMessageAdvanced =
+          item.lastMessageAt &&
+          item.lastMessageAt !== previous.lastMessageAt &&
+          item.lastMessageDirection === 'inbound';
+
+        if (unreadIncreased || inboundMessageChanged || inboundMessageAdvanced) {
+          return buildIncomingMessageNotificationSignature(item);
+        }
+      }
+
+      return null;
     }
 
     function renderFilterCounts(items) {
@@ -1585,15 +1774,15 @@
 
       const previousConversations = state.allConversations;
       const nextConversations = await response.json();
-      const shouldNotify =
+      const notificationSignature =
         options.playNotification &&
         shouldPlayIncomingMessageNotification(previousConversations, nextConversations);
 
       state.allConversations = nextConversations;
       state.conversationSnapshotReady = true;
       refreshConversationView();
-      if (shouldNotify) {
-        playIncomingMessageNotification();
+      if (notificationSignature) {
+        playIncomingMessageNotification(notificationSignature);
       }
     }
 
@@ -2151,17 +2340,28 @@
     }
 
     function scheduleRealtimeRefresh(eventPayload) {
+      state.pendingRealtimeNotification =
+        state.pendingRealtimeNotification || eventPayload?.type === 'message';
+
+      if (eventPayload?.conversationId) {
+        state.pendingRealtimeConversationId = eventPayload.conversationId;
+      }
+
       if (state.refreshTimer) {
         clearTimeout(state.refreshTimer);
       }
 
       state.refreshTimer = setTimeout(async () => {
+        const shouldPlayNotification = state.pendingRealtimeNotification;
+        const eventConversationId = state.pendingRealtimeConversationId || eventPayload?.conversationId || null;
+        state.pendingRealtimeNotification = false;
+        state.pendingRealtimeConversationId = null;
+
         try {
           await Promise.all([
             loadStats(),
-            loadConversations({ playNotification: eventPayload?.type === 'message' })
+            loadConversations({ playNotification: shouldPlayNotification })
           ]);
-          const eventConversationId = eventPayload?.conversationId || null;
           const targetConversationId = state.activeConversationId;
           if (targetConversationId && (!eventConversationId || targetConversationId === eventConversationId)) {
             await Promise.all([
@@ -2263,6 +2463,13 @@
 
     toolbarNewConversationBtn?.addEventListener('click', () => {
       newConversationBtn.click();
+    });
+
+    toolbarAudioBtn?.addEventListener('click', async () => {
+      setAudioNotificationsEnabled(!state.audioNotificationsEnabled);
+      if (state.audioNotificationsEnabled) {
+        await primeNotificationAudio();
+      }
     });
 
     createConversationBtn.addEventListener('click', async () => {
@@ -2433,11 +2640,11 @@
     });
 
     document.addEventListener('pointerdown', () => {
-      void unlockNotificationAudio();
+      void primeNotificationAudio();
     }, { passive: true });
 
     document.addEventListener('keydown', () => {
-      void unlockNotificationAudio();
+      void primeNotificationAudio();
     });
 
     chatBody.addEventListener('click', (event) => {
@@ -2472,6 +2679,7 @@
       pendingClose?.resolve(true);
     });
 
+    syncAudioNotificationButton();
     initialize();
   </script>
 </body>
