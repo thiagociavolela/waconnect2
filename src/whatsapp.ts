@@ -58,6 +58,8 @@ export class WhatsAppService {
   private qrString: string | null = null;
   private connecting = false;
   private connected = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private manualDisconnect = false;
   private authFolder = path.join(process.cwd(), "auth");
   private meJid: string | undefined;
   private pushName: string | undefined;
@@ -68,10 +70,6 @@ export class WhatsAppService {
   // último envio global (qualquer destinatário) para garantir espaçamento mínimo
   private lastSendAt = 0;
   private lastSendByJid = new Map<string, number>();
-
-  constructor() {
-    void this.start();
-  }
 
   private baileysModule: Promise<typeof import("@whiskeysockets/baileys")> | null = null;
 
@@ -171,77 +169,98 @@ export class WhatsAppService {
 
   async start() {
     if (this.connecting) return;
+    this.clearReconnectTimer();
+    this.manualDisconnect = false;
     this.connecting = true;
 
-    const baileys = await this.loadBaileys();
-    const { state, saveCreds } = await baileys.useMultiFileAuthState(this.authFolder);
-    const { version } = await baileys.fetchLatestBaileysVersion();
+    try {
+      const baileys = await this.loadBaileys();
+      const { state, saveCreds } = await baileys.useMultiFileAuthState(this.authFolder);
+      const { version } = await baileys.fetchLatestBaileysVersion();
 
-    this.socket = baileys.makeWASocket({
-      version,
-      auth: state,
-      printQRInTerminal: false,
-      browser: baileys.Browsers.macOS("Chrome"),
-      // ativa thumbnails enviadas para gerar previews ricos de links
-      generateHighQualityLinkPreview: true,
-      // define user-agent para melhorar compatibilidade de scraping de OG tags
-      options: {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36"
+      const socket = baileys.makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        browser: baileys.Browsers.macOS("Chrome"),
+        // ativa thumbnails enviadas para gerar previews ricos de links
+        generateHighQualityLinkPreview: true,
+        // define user-agent para melhorar compatibilidade de scraping de OG tags
+        options: {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36"
+          }
         }
-      }
-    });
+      });
 
-    this.socket.ev.on("creds.update", saveCreds);
+      this.socket = socket;
+      socket.ev.on("creds.update", saveCreds);
 
-    this.socket.ev.on("connection.update", (update) => {
-      console.log("conn update", update.connection, update.qr ? "qr-received" : "", update.lastDisconnect?.error?.message ?? "");
-      const { connection, lastDisconnect, qr } = update;
-      if (qr) {
-        console.log("qr received len", qr.length);
-        this.qrString = qr;
-        this.connected = false;
-      }
+      socket.ev.on("connection.update", (update) => {
+        if (this.socket !== socket) return;
 
-      if (connection === "open") {
-        this.connected = true;
-        this.qrString = null;
-        this.meJid = this.socket?.user?.id;
-        this.pushName = this.socket?.user?.name;
-        void this.loadProfilePic();
-      }
+        console.log("conn update", update.connection, update.qr ? "qr-received" : "", update.lastDisconnect?.error?.message ?? "");
+        const { connection, lastDisconnect, qr } = update;
+        if (qr) {
+          console.log("qr received len", qr.length);
+          this.qrString = qr;
+          this.connected = false;
+        }
 
-      if (connection === "close") {
-        this.connected = false;
-        const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
-        const shouldReconnect = statusCode !== baileys.DisconnectReason.loggedOut;
-        if (shouldReconnect) {
-          this.connecting = false;
-          void this.start();
-        } else {
+        if (connection === "open") {
+          this.connected = true;
           this.qrString = null;
-          void this.resetAuthAndRestart();
+          this.meJid = socket.user?.id;
+          this.pushName = socket.user?.name;
+          void this.loadProfilePic();
         }
-      }
-    });
 
-    this.socket.ev.on("messages.upsert", async (payload) => {
-      for (const message of payload.messages ?? []) {
-        const parsed = await this.parseIncomingWhatsAppMessage(message);
-        if (!parsed) continue;
-        for (const listener of this.incomingMessageListeners) {
-          Promise.resolve(listener(parsed)).catch((err) => {
-            console.error("Falha ao processar listener de mensagem recebida:", err);
-          });
+        if (connection === "close") {
+          this.connected = false;
+          this.socket = null;
+          const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+          const shouldReconnect = statusCode !== baileys.DisconnectReason.loggedOut;
+
+          if (this.manualDisconnect) {
+            return;
+          }
+
+          if (shouldReconnect) {
+            this.scheduleReconnect(3000);
+          } else {
+            this.qrString = null;
+            void this.resetAuthAndRestart();
+          }
         }
-      }
-    });
+      });
 
-    this.connecting = false;
+      socket.ev.on("messages.upsert", async (payload) => {
+        if (this.socket !== socket) return;
+
+        for (const message of payload.messages ?? []) {
+          const parsed = await this.parseIncomingWhatsAppMessage(message);
+          if (!parsed) continue;
+          for (const listener of this.incomingMessageListeners) {
+            Promise.resolve(listener(parsed)).catch((err) => {
+              console.error("Falha ao processar listener de mensagem recebida:", err);
+            });
+          }
+        }
+      });
+    } catch (err) {
+      this.connected = false;
+      this.socket = null;
+      console.error("Falha ao iniciar conexao do WhatsApp:", err);
+      this.scheduleReconnect(5000);
+    } finally {
+      this.connecting = false;
+    }
   }
 
   private async resetAuthAndRestart() {
+    this.clearReconnectTimer();
+    this.manualDisconnect = false;
     try {
       await fs.rm(this.authFolder, { recursive: true, force: true });
     } catch (err) {
@@ -252,7 +271,7 @@ export class WhatsAppService {
     this.socket = null;
     this.qrString = null;
     this.profilePicUrl = undefined;
-    void this.start();
+    this.scheduleReconnect(1000);
   }
 
   async forceNewQr() {
@@ -269,6 +288,8 @@ export class WhatsAppService {
   }
 
   async disconnect() {
+    this.manualDisconnect = true;
+    this.clearReconnectTimer();
     try {
       await this.socket?.logout();
       await this.socket?.end(new Error("manual disconnect"));
@@ -281,6 +302,22 @@ export class WhatsAppService {
     this.qrString = null;
     this.profilePicUrl = undefined;
     this.contactProfilePicCache.clear();
+  }
+
+  private scheduleReconnect(delayMs: number) {
+    if (this.manualDisconnect || this.connecting || this.reconnectTimer) return;
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.start();
+    }, delayMs);
+    this.reconnectTimer.unref?.();
+  }
+
+  private clearReconnectTimer() {
+    if (!this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   private assertSocket(): WASocket {

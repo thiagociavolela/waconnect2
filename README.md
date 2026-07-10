@@ -67,6 +67,23 @@ curl -X POST http://localhost:3000/api/send/text \
 ## Documentação Swagger
 - Acesse `/api-docs` (UI) ou `/api-docs.json` (JSON).
 
+## Persistência das estatísticas da API
+- As estatísticas de uso dos endpoints agora são persistidas de forma durável e sobrevivem a reinícios da aplicação.
+- Por padrão, `API_STATS_STORAGE=auto` usa MySQL quando algum módulo com banco já estiver habilitado (`ATTEND_DB_ENABLED=true` ou `SCHED_DB_ENABLED=true`).
+- Mesmo usando MySQL, o arquivo local `data/api-endpoint-stats.json` continua sendo gravado como backup.
+
+### Flags das estatísticas da API
+| Chave | Descrição | Padrão |
+|---|---|---|
+| `API_STATS_STORAGE` | Modo de persistência: `auto`, `db` ou `file` | `auto` |
+| `API_STATS_DB_HOST` | Host do MySQL das estatísticas | herda `ATTEND_DB_HOST`/`SCHED_DB_HOST` |
+| `API_STATS_DB_PORT` | Porta do MySQL das estatísticas | herda `ATTEND_DB_PORT`/`SCHED_DB_PORT` |
+| `API_STATS_DB_USER` | Usuário do MySQL das estatísticas | herda `ATTEND_DB_USER`/`SCHED_DB_USER` |
+| `API_STATS_DB_PASSWORD` | Senha do MySQL das estatísticas | herda `ATTEND_DB_PASSWORD`/`SCHED_DB_PASSWORD` |
+| `API_STATS_DB_NAME` | Banco das estatísticas | herda `ATTEND_DB_NAME`/`SCHED_DB_NAME` |
+| `API_STATS_DB_POOL_LIMIT` | Tamanho máximo do pool | `5` |
+| `API_STATS_DB_AUTO_CREATE_SCHEMA` | Cria a tabela automaticamente na inicialização | `true` |
+
 ## Agendamento de mensagens (MySQL)
 - O módulo de agendamento é opcional e usa flags próprias com prefixo `SCHED_`.
 - Quando `SCHED_DB_ENABLED=true`, o servidor inicializa o pool MySQL, cria a tabela automaticamente por padrão e sobe o worker de processamento.

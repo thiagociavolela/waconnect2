@@ -1279,6 +1279,7 @@ void bootstrap();
 
 async function bootstrap() {
   try {
+    await whatsapp.start();
     await attendanceModule.start();
     await scheduleModule.start();
     app.listen(PORT, () => {

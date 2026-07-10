@@ -1,6 +1,7 @@
 import fs from "fs/promises";
+import mysql, { Pool, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import path from "path";
-import { APP_TIMEZONE, appDateTimeToMysql, mysqlAppToIso, nowApp } from "./timezone";
+import { APP_TIMEZONE, APP_TIMEZONE_OFFSET, appDateTimeToMysql, mysqlAppToIso, nowApp } from "./timezone";
 
 export type TrackedEndpointKey =
   | "check_number"
@@ -69,6 +70,30 @@ type LegacyStatsFileShape = {
   endpoints?: Record<TrackedEndpointKey, PersistedEndpointMetric>;
 };
 
+type ApiStatsPersistedShape = StatsFileShape | LegacyStatsFileShape;
+
+type ApiStatsStorageMode = "auto" | "file" | "db";
+
+interface ApiStatsStorageConfig {
+  mode: ApiStatsStorageMode;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  poolLimit: number;
+  autoCreateSchema: boolean;
+}
+
+interface ApiStatsStorage {
+  load(): Promise<ApiStatsPersistedShape | null>;
+  save(payload: StatsFileShape): Promise<void>;
+}
+
+interface ApiStatsSnapshotRow extends RowDataPacket {
+  payload_json: string;
+}
+
 const TRACKED_ENDPOINTS: Array<Pick<EndpointMetric, "key" | "method" | "path" | "label">> = [
   { key: "check_number", method: "POST", path: "/api/check-number", label: "Verificar numero" },
   { key: "send_text", method: "POST", path: "/api/send/text", label: "Enviar texto" },
@@ -92,6 +117,14 @@ const TRACKED_ENDPOINTS: Array<Pick<EndpointMetric, "key" | "method" | "path" | 
 ];
 
 const DAILY_RETENTION_DAYS = 90;
+const API_STATS_STORE_KEY = "default";
+const CREATE_API_STATS_SNAPSHOT_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS api_endpoint_stats_snapshot (
+  store_key VARCHAR(40) NOT NULL PRIMARY KEY,
+  payload_json JSON NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`;
 
 function createEmptyMetric(): PersistedEndpointMetric {
   return {
@@ -112,6 +145,8 @@ function createEmptyEndpointStats(): PersistedEndpointStats {
 
 export class ApiStatsService {
   private readonly statsFilePath = path.join(process.cwd(), "data", "api-endpoint-stats.json");
+  private readonly fileStorage: ApiStatsStorage;
+  private storage: ApiStatsStorage;
   private readonly stats = new Map<TrackedEndpointKey, PersistedEndpointStats>();
   private writeScheduled = false;
   private shuttingDown = false;
@@ -121,7 +156,9 @@ export class ApiStatsService {
     for (const endpoint of TRACKED_ENDPOINTS) {
       this.stats.set(endpoint.key, createEmptyEndpointStats());
     }
-    this.ready = this.load();
+    this.fileStorage = new FileApiStatsStorage(this.statsFilePath);
+    this.storage = this.fileStorage;
+    this.ready = this.initialize();
     this.registerProcessHooks();
   }
 
@@ -173,6 +210,11 @@ export class ApiStatsService {
     };
   }
 
+  private async initialize() {
+    this.storage = await this.resolveStorage();
+    await this.load();
+  }
+
   private selectMetricForPeriod(stats: PersistedEndpointStats, period: EndpointStatsPeriod): PersistedEndpointMetric {
     if (period === "all") {
       return cloneMetric(stats.overall);
@@ -206,8 +248,11 @@ export class ApiStatsService {
 
   private async load() {
     try {
-      const content = await fs.readFile(this.statsFilePath, "utf8");
-      const parsed = JSON.parse(content) as StatsFileShape | LegacyStatsFileShape;
+      let parsed = await this.storage.load();
+      if (!parsed && this.storage !== this.fileStorage) {
+        parsed = await this.fileStorage.load();
+      }
+      if (!parsed) return;
 
       for (const endpoint of TRACKED_ENDPOINTS) {
         const current = this.stats.get(endpoint.key) ?? createEmptyEndpointStats();
@@ -233,10 +278,7 @@ export class ApiStatsService {
         this.stats.set(endpoint.key, current);
       }
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        console.error("Falha ao carregar estatisticas da API:", err);
-      }
+      console.error("Falha ao carregar estatisticas da API:", err);
     }
   }
 
@@ -251,12 +293,21 @@ export class ApiStatsService {
 
   private async flush() {
     this.writeScheduled = false;
+    const endpoints = Object.fromEntries(this.stats.entries()) as StatsFileShape["endpoints"];
+    const payload: StatsFileShape = { endpoints };
+
     try {
-      await fs.mkdir(path.dirname(this.statsFilePath), { recursive: true });
-      const endpoints = Object.fromEntries(this.stats.entries()) as StatsFileShape["endpoints"];
-      await fs.writeFile(this.statsFilePath, JSON.stringify({ endpoints }, null, 2), "utf8");
+      await this.storage.save(payload);
     } catch (err) {
       console.error("Falha ao persistir estatisticas da API:", err);
+    }
+
+    if (this.storage !== this.fileStorage) {
+      try {
+        await this.fileStorage.save(payload);
+      } catch (err) {
+        console.error("Falha ao persistir backup local das estatisticas da API:", err);
+      }
     }
   }
 
@@ -280,6 +331,114 @@ export class ApiStatsService {
 
     process.on("SIGINT", () => gracefulShutdown("SIGINT"));
     process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  }
+
+  private async resolveStorage(): Promise<ApiStatsStorage> {
+    const config = loadApiStatsStorageConfig();
+    if (config.mode === "file") {
+      return this.fileStorage;
+    }
+
+    if (config.mode === "db" || config.mode === "auto") {
+      try {
+        const storage = new MySqlApiStatsStorage(config);
+        await storage.initialize();
+        console.log("Persistencia das estatisticas da API via MySQL ativada.");
+        return storage;
+      } catch (err) {
+        console.error("Falha ao ativar persistencia MySQL das estatisticas da API. Usando arquivo local.", err);
+      }
+    }
+
+    return this.fileStorage;
+  }
+}
+
+class FileApiStatsStorage implements ApiStatsStorage {
+  constructor(private readonly statsFilePath: string) {}
+
+  async load(): Promise<ApiStatsPersistedShape | null> {
+    try {
+      const content = await fs.readFile(this.statsFilePath, "utf8");
+      return JSON.parse(content) as ApiStatsPersistedShape;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async save(payload: StatsFileShape): Promise<void> {
+    await fs.mkdir(path.dirname(this.statsFilePath), { recursive: true });
+    await fs.writeFile(this.statsFilePath, JSON.stringify(payload, null, 2), "utf8");
+  }
+}
+
+class MySqlApiStatsStorage implements ApiStatsStorage {
+  private pool: Pool | null = null;
+
+  constructor(private readonly config: ApiStatsStorageConfig) {}
+
+  async initialize() {
+    this.pool = mysql.createPool({
+      host: this.config.host,
+      port: this.config.port,
+      user: this.config.user,
+      password: this.config.password,
+      database: this.config.database,
+      waitForConnections: true,
+      connectionLimit: this.config.poolLimit,
+      queueLimit: 0,
+      timezone: APP_TIMEZONE_OFFSET,
+      dateStrings: true,
+      jsonStrings: true,
+      enableKeepAlive: true,
+      charset: "utf8mb4"
+    });
+
+    if (this.config.autoCreateSchema) {
+      await this.pool.execute(CREATE_API_STATS_SNAPSHOT_TABLE_SQL);
+    }
+  }
+
+  async load(): Promise<ApiStatsPersistedShape | null> {
+    const pool = this.requirePool();
+    const [rows] = await pool.execute<ApiStatsSnapshotRow[]>(
+      `SELECT payload_json
+         FROM api_endpoint_stats_snapshot
+        WHERE store_key = ?
+        LIMIT 1`,
+      [API_STATS_STORE_KEY]
+    );
+
+    const payload = rows[0]?.payload_json;
+    if (!payload) {
+      return null;
+    }
+
+    return JSON.parse(payload) as ApiStatsPersistedShape;
+  }
+
+  async save(payload: StatsFileShape): Promise<void> {
+    const pool = this.requirePool();
+    const nowDb = appDateTimeToMysql(nowApp());
+    await pool.execute<ResultSetHeader>(
+      `INSERT INTO api_endpoint_stats_snapshot (store_key, payload_json, updated_at)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         payload_json = VALUES(payload_json),
+         updated_at = VALUES(updated_at)`,
+      [API_STATS_STORE_KEY, JSON.stringify(payload), nowDb]
+    );
+  }
+
+  private requirePool(): Pool {
+    if (!this.pool) {
+      throw new Error("Persistencia MySQL das estatisticas da API nao inicializada.");
+    }
+    return this.pool;
   }
 }
 
@@ -336,6 +495,17 @@ function maxIso(current: string | null, candidate: string | null): string | null
   return candidate > current ? candidate : current;
 }
 
+function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function parseNumber(value: string | undefined, defaultValue: number): number {
+  if (!value) return defaultValue;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
 function inferLegacyBucketKey(lastCalledAt: string | null): string {
   if (lastCalledAt) {
     const datePart = lastCalledAt.slice(0, 10);
@@ -345,4 +515,30 @@ function inferLegacyBucketKey(lastCalledAt: string | null): string {
   }
 
   return nowApp().toFormat("yyyy-MM-dd");
+}
+
+function loadApiStatsStorageConfig(env: NodeJS.ProcessEnv = process.env): ApiStatsStorageConfig {
+  const mode = parseStorageMode(env.API_STATS_STORAGE);
+  const dbEnabledByProject =
+    parseBoolean(env.ATTEND_DB_ENABLED, false) ||
+    parseBoolean(env.SCHED_DB_ENABLED, false);
+  const resolvedMode: ApiStatsStorageMode = mode === "auto" ? (dbEnabledByProject ? "db" : "file") : mode;
+
+  return {
+    mode: resolvedMode,
+    host: env.API_STATS_DB_HOST ?? env.ATTEND_DB_HOST ?? env.SCHED_DB_HOST ?? "127.0.0.1",
+    port: parseNumber(env.API_STATS_DB_PORT ?? env.ATTEND_DB_PORT ?? env.SCHED_DB_PORT, 3306),
+    user: env.API_STATS_DB_USER ?? env.ATTEND_DB_USER ?? env.SCHED_DB_USER ?? "root",
+    password: env.API_STATS_DB_PASSWORD ?? env.ATTEND_DB_PASSWORD ?? env.SCHED_DB_PASSWORD ?? "",
+    database: env.API_STATS_DB_NAME ?? env.ATTEND_DB_NAME ?? env.SCHED_DB_NAME ?? "waconnect",
+    poolLimit: parseNumber(env.API_STATS_DB_POOL_LIMIT, 5),
+    autoCreateSchema: parseBoolean(env.API_STATS_DB_AUTO_CREATE_SCHEMA, true)
+  };
+}
+
+function parseStorageMode(value: string | undefined): ApiStatsStorageMode {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "db") return "db";
+  if (normalized === "file") return "file";
+  return "auto";
 }
