@@ -327,17 +327,24 @@ export class AttendanceModule {
     }
     const contactName = sanitizeOptional(input.contactName);
     const assignedAgent = sanitizeOptional(input.assignedAgent);
-    const existing = await this.getConversationByJid(contactJid);
+    const existing = await this.findConversationByRecipientIdentity({
+      primaryJid: contactJid,
+      phoneNumber: contactNumber
+    });
     const nowDb = appDateTimeToMysql(nowApp());
 
     if (existing) {
+      const nextContactJid = shouldPersistConversationIdentity(input.to, input.contactJid) ? contactJid : null;
+      const nextContactNumber = nextContactJid ? extractPhoneNumberFromAttendanceJid(nextContactJid) ?? contactNumber : null;
       await pool.execute<ResultSetHeader>(
         `UPDATE attendance_conversations
-            SET contact_name = COALESCE(?, contact_name),
+            SET contact_number = COALESCE(?, contact_number),
+                contact_jid = COALESCE(?, contact_jid),
+                contact_name = COALESCE(?, contact_name),
                 assigned_agent = COALESCE(?, assigned_agent),
                 updated_at = ?
           WHERE id = ?`,
-        [contactName, assignedAgent, nowDb, existing.id]
+        [nextContactNumber, nextContactJid, contactName, assignedAgent, nowDb, existing.id]
       );
       const refreshed = await this.getConversationById(existing.id);
       if (!refreshed) throw new Error("Falha ao recarregar conversa existente.");
@@ -556,10 +563,14 @@ export class AttendanceModule {
         : { to: conversation.contactNumber, message };
 
     const key = await this.whatsapp.sendText(sendPayload);
+    const resolvedContactJid = normalizeSupportedAttendanceJid(typeof key?.remoteJid === "string" ? key.remoteJid : null);
+    const resolvedContactNumber = resolvedContactJid ? extractPhoneNumberFromAttendanceJid(resolvedContactJid) : null;
     return this.persistOutboundTextMessage(conversation, {
       message,
       agentName: input.agentName,
-      waMessageId: key?.id
+      waMessageId: key?.id,
+      contactJid: resolvedContactJid,
+      contactNumber: resolvedContactNumber
     });
   }
 
@@ -597,7 +608,11 @@ export class AttendanceModule {
 
     const key = await this.whatsapp.sendMedia(sendPayload);
 
-    const waMessageId = buildExternalMessageId(conversation.contactJid, key?.id);
+    const resolvedContactJid = normalizeSupportedAttendanceJid(typeof key?.remoteJid === "string" ? key.remoteJid : null);
+    const resolvedContactNumber = resolvedContactJid ? extractPhoneNumberFromAttendanceJid(resolvedContactJid) : null;
+    const targetContactJid = resolvedContactJid ?? conversation.contactJid;
+    const targetContactNumber = resolvedContactNumber ?? conversation.contactNumber;
+    const waMessageId = buildExternalMessageId(targetContactJid, key?.id);
     const agentName = sanitizeOptional(input.agentName);
     const messageId = crypto.randomUUID();
     const nowDb = appDateTimeToMysql(nowApp());
@@ -623,7 +638,9 @@ export class AttendanceModule {
 
     await pool.execute<ResultSetHeader>(
       `UPDATE attendance_conversations
-          SET status = ?,
+          SET contact_number = ?,
+              contact_jid = ?,
+              status = ?,
               assigned_agent = COALESCE(?, assigned_agent),
               last_message_text = ?,
               last_message_direction = 'outbound',
@@ -632,7 +649,7 @@ export class AttendanceModule {
               unread_count = 0,
               updated_at = ?
         WHERE id = ?`,
-      [resolveOutboundConversationStatus(conversation.status), agentName, previewText, kind, nowDb, nowDb, conversation.id]
+      [targetContactNumber, targetContactJid, resolveOutboundConversationStatus(conversation.status), agentName, previewText, kind, nowDb, nowDb, conversation.id]
     );
 
     const inserted = await this.getMessageById(messageId);
@@ -777,10 +794,18 @@ export class AttendanceModule {
 
   private async persistOutboundTextMessage(
     conversation: AttendanceConversationRecord,
-    input: { message: string; waMessageId?: string | null | undefined; agentName?: string | null | undefined }
+    input: {
+      message: string;
+      waMessageId?: string | null | undefined;
+      agentName?: string | null | undefined;
+      contactJid?: string | null | undefined;
+      contactNumber?: string | null | undefined;
+    }
   ): Promise<AttendanceMessageRecord> {
     const pool = this.requirePool();
-    const waMessageId = buildExternalMessageId(conversation.contactJid, input.waMessageId);
+    const targetContactJid = normalizeSupportedAttendanceJid(input.contactJid) ?? conversation.contactJid;
+    const targetContactNumber = input.contactNumber?.trim() || extractPhoneNumberFromAttendanceJid(targetContactJid) || conversation.contactNumber;
+    const waMessageId = buildExternalMessageId(targetContactJid, input.waMessageId);
     if (waMessageId) {
       const existing = await this.getMessageByExternalId(waMessageId);
       if (existing) {
@@ -801,7 +826,9 @@ export class AttendanceModule {
 
     await pool.execute<ResultSetHeader>(
       `UPDATE attendance_conversations
-          SET status = ?,
+          SET contact_number = ?,
+              contact_jid = ?,
+              status = ?,
               assigned_agent = COALESCE(?, assigned_agent),
               last_message_text = ?,
               last_message_direction = 'outbound',
@@ -810,7 +837,7 @@ export class AttendanceModule {
               unread_count = 0,
               updated_at = ?
         WHERE id = ?`,
-      [resolveOutboundConversationStatus(conversation.status), agentName, input.message, nowDb, nowDb, conversation.id]
+      [targetContactNumber, targetContactJid, resolveOutboundConversationStatus(conversation.status), agentName, input.message, nowDb, nowDb, conversation.id]
     );
 
     const inserted = await this.getMessageById(messageId);
@@ -855,19 +882,40 @@ export class AttendanceModule {
   }
 
   private async findConversationByIncomingMessage(message: IncomingWhatsAppMessage): Promise<AttendanceConversationRecord | null> {
-    const directMatch = await this.getConversationByJid(message.remoteJid);
-    if (directMatch) {
-      return directMatch;
-    }
+    return this.findConversationByRecipientIdentity({
+      primaryJid: message.remoteJid,
+      alternateJids: [message.remoteJidAlt],
+      phoneNumber: message.fromNumber
+    });
+  }
 
-    if (message.remoteJidAlt) {
-      const altMatch = await this.getConversationByJid(message.remoteJidAlt);
-      if (altMatch) {
-        return altMatch;
+  private async findConversationByRecipientIdentity(input: {
+    primaryJid?: string | null;
+    alternateJids?: Array<string | null | undefined>;
+    phoneNumber?: string | null;
+  }): Promise<AttendanceConversationRecord | null> {
+    const directJids = uniqueAttendanceStrings([input.primaryJid, ...(input.alternateJids ?? [])]).filter(isSupportedAttendanceJid);
+    for (const directJid of directJids) {
+      const directMatch = await this.getConversationByJid(directJid);
+      if (directMatch) {
+        return directMatch;
       }
     }
 
-    return null;
+    const candidateNumbers = uniqueAttendanceStrings([
+      input.phoneNumber,
+      ...directJids.map((jid) => extractPhoneNumberFromAttendanceJid(jid))
+    ]).flatMap((phoneNumber) => buildEquivalentAttendancePhoneNumbers(phoneNumber));
+    const candidateJids = uniqueAttendanceStrings([
+      ...directJids,
+      ...candidateNumbers.map((phoneNumber) => `${phoneNumber}@s.whatsapp.net`)
+    ]);
+
+    if (!candidateJids.length && !candidateNumbers.length) {
+      return null;
+    }
+
+    return this.getConversationByCandidates(candidateJids, candidateNumbers);
   }
 
   private async getConversationByJid(contactJid: string): Promise<AttendanceConversationRecord | null> {
@@ -885,6 +933,37 @@ export class AttendanceModule {
           AND ${SUPPORTED_ATTENDANCE_JID_SQL}
         LIMIT 1`,
       [contactJid]
+    );
+    return rows[0] ? this.attachCachedProfilePicture(mapConversationRow(rows[0])) : null;
+  }
+
+  private async getConversationByCandidates(contactJids: string[], contactNumbers: string[]): Promise<AttendanceConversationRecord | null> {
+    if (!contactJids.length && !contactNumbers.length) {
+      return null;
+    }
+
+    const conditions: string[] = [];
+    const params: string[] = [];
+    if (contactJids.length) {
+      conditions.push(`contact_jid IN (${contactJids.map(() => "?").join(", ")})`);
+      params.push(...contactJids);
+    }
+    if (contactNumbers.length) {
+      conditions.push(`contact_number IN (${contactNumbers.map(() => "?").join(", ")})`);
+      params.push(...contactNumbers);
+    }
+
+    const pool = this.requirePool();
+    const [rows] = await pool.execute<AttendanceConversationRow[]>(
+      `SELECT id, contact_jid, contact_number, contact_name, status, assigned_agent, tags_json,
+              last_message_text, last_message_direction, last_message_type, last_message_at,
+              unread_count, created_at, updated_at
+         FROM attendance_conversations
+        WHERE (${conditions.join(" OR ")})
+          AND ${SUPPORTED_ATTENDANCE_JID_SQL}
+        ORDER BY COALESCE(last_message_at, created_at) DESC, updated_at DESC
+        LIMIT 1`,
+      params
     );
     return rows[0] ? this.attachCachedProfilePicture(mapConversationRow(rows[0])) : null;
   }
@@ -1084,10 +1163,73 @@ function formatWhatsappJid(value: string): string {
   return `${normalizePhoneNumber(normalized)}@s.whatsapp.net`;
 }
 
+function normalizeSupportedAttendanceJid(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = formatWhatsappJid(value).trim();
+  return isSupportedAttendanceJid(normalized) ? normalized : null;
+}
+
 function isSupportedAttendanceJid(value: string | null | undefined): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
   return normalized.endsWith("@s.whatsapp.net");
+}
+
+function extractPhoneNumberFromAttendanceJid(value: string | null | undefined): string | null {
+  const normalized = normalizeSupportedAttendanceJid(value);
+  if (!normalized) return null;
+  const atIndex = normalized.indexOf("@");
+  if (atIndex <= 0) return null;
+  const localPart = normalized.slice(0, atIndex);
+  const phonePart = localPart.split(":")[0] ?? localPart;
+  const digits = phonePart.replace(/\D/g, "");
+  return digits || null;
+}
+
+function buildEquivalentAttendancePhoneNumbers(phoneNumber: string): string[] {
+  const digits = normalizePhoneNumber(phoneNumber);
+  if (!digits) return [];
+  if (!digits.startsWith("55")) {
+    return [digits];
+  }
+
+  const nationalNumber = digits.slice(2);
+  if (nationalNumber.length !== 10 && nationalNumber.length !== 11) {
+    return [digits];
+  }
+
+  const ddd = nationalNumber.slice(0, 2);
+  const subscriber = nationalNumber.slice(2);
+  if (!/^\d{2}$/.test(ddd)) {
+    return [digits];
+  }
+
+  if (subscriber.length === 9 && subscriber.startsWith("9")) {
+    return uniqueAttendanceStrings([digits, `55${ddd}${subscriber.slice(1)}`]);
+  }
+
+  if (subscriber.length === 8 && /^[6-9]/.test(subscriber)) {
+    return uniqueAttendanceStrings([`55${ddd}9${subscriber}`, digits]);
+  }
+
+  return [digits];
+}
+
+function shouldPersistConversationIdentity(to: string, contactJid?: string | null | undefined): boolean {
+  const explicitContactJid = normalizeSupportedAttendanceJid(contactJid);
+  const explicitToJid = to.includes("@") ? normalizeSupportedAttendanceJid(to) : null;
+  return Boolean(explicitContactJid || explicitToJid);
+}
+
+function uniqueAttendanceStrings(values: Array<string | null | undefined>): string[] {
+  const unique = new Set<string>();
+  for (const value of values) {
+    const normalized = value?.trim();
+    if (normalized) {
+      unique.add(normalized);
+    }
+  }
+  return Array.from(unique.values());
 }
 
 function buildExternalMessageId(remoteJid: string, messageId: string | null | undefined): string | null {

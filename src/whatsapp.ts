@@ -36,6 +36,13 @@ export interface SendNarrationPayload {
   slow?: boolean;
 }
 
+export interface CheckNumberResult {
+  input: string;
+  tried: string[];
+  exists: boolean;
+  jid?: string;
+}
+
 export type IncomingWhatsAppMessageType = "text" | "image" | "video" | "audio" | "document" | "sticker" | "unknown";
 
 export interface IncomingWhatsAppMessage {
@@ -239,7 +246,7 @@ export class WhatsAppService {
         if (this.socket !== socket) return;
 
         for (const message of payload.messages ?? []) {
-          const parsed = await this.parseIncomingWhatsAppMessage(message);
+          const parsed = await this.parseIncomingWhatsAppMessage(message, payload.type);
           if (!parsed) continue;
           for (const listener of this.incomingMessageListeners) {
             Promise.resolve(listener(parsed)).catch((err) => {
@@ -362,8 +369,51 @@ export class WhatsAppService {
     return `${this.normalizeNumber(normalized)}@s.whatsapp.net`;
   }
 
+  private buildLookupCandidateJids(raw: string): string[] {
+    const normalized = raw.replace(/\s|-/g, "");
+    const normalizedLower = normalized.toLowerCase();
+    if (normalizedLower.endsWith("@g.us")) {
+      return [normalized];
+    }
+    if (normalized.includes("@") && !normalizedLower.endsWith("@s.whatsapp.net")) {
+      return [normalized];
+    }
+
+    const digits = extractLookupPhoneDigits(normalized);
+    if (!digits) {
+      return [this.formatJid(raw)];
+    }
+
+    return buildLookupCandidateNumbers(digits).map((candidate) => `${candidate}@s.whatsapp.net`);
+  }
+
+  private async lookupNumberCandidates(to: string): Promise<CheckNumberResult> {
+    const sock = this.assertSocket();
+    const tried = this.buildLookupCandidateJids(to);
+    for (const candidate of tried) {
+      const result = await sock.onWhatsApp(candidate);
+      const first = result?.[0];
+      if (first?.exists) {
+        const jid = typeof first.jid === "string" && first.jid.trim() ? first.jid : candidate;
+        return { input: to, tried, exists: true, jid };
+      }
+    }
+
+    return { input: to, tried, exists: false };
+  }
+
+  private async resolveSendJid(to: string): Promise<string> {
+    const candidates = this.buildLookupCandidateJids(to);
+    if (candidates.length <= 1) {
+      return this.formatJid(to);
+    }
+
+    const resolution = await this.withRetry(() => this.lookupNumberCandidates(to));
+    return resolution.jid ?? resolution.tried[0] ?? this.formatJid(to);
+  }
+
   async sendText({ to, message, delaySeconds }: SendTextPayload) {
-    const jid = this.formatJid(to);
+    const jid = await this.resolveSendJid(to);
     const requestedDelayMs = Number.isFinite(delaySeconds) ? (delaySeconds as number) * 1000 : 3000;
     return this.scheduleSend(
       jid,
@@ -398,7 +448,7 @@ export class WhatsAppService {
   }
 
   async sendMedia({ to, buffer, kind, mimetype, fileName, caption }: SendMediaPayload) {
-    const jid = this.formatJid(to);
+    const jid = await this.resolveSendJid(to);
     return this.scheduleSend(jid, () =>
       this.withRetry(async () => {
         const sock = this.assertSocket();
@@ -431,7 +481,7 @@ export class WhatsAppService {
   }
 
   async sendContact({ to, name, phone }: SendContactPayload) {
-    const jid = this.formatJid(to);
+    const jid = await this.resolveSendJid(to);
     return this.scheduleSend(jid, () =>
       this.withRetry(async () => {
         const sock = this.assertSocket();
@@ -479,11 +529,8 @@ export class WhatsAppService {
     });
   }
 
-  async checkNumber(to: string) {
-    const sock = this.assertSocket();
-    const jid = this.formatJid(to);
-    const result = await sock.onWhatsApp(jid);
-    return result;
+  async checkNumber(to: string): Promise<CheckNumberResult> {
+    return this.withRetry(() => this.lookupNumberCandidates(to));
   }
 
   private async withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
@@ -502,7 +549,7 @@ export class WhatsAppService {
     throw lastErr;
   }
 
-  private async parseIncomingWhatsAppMessage(message: WAMessage): Promise<IncomingWhatsAppMessage | null> {
+  private async parseIncomingWhatsAppMessage(message: WAMessage, upsertType?: string): Promise<IncomingWhatsAppMessage | null> {
     if (message.key?.fromMe) return null;
 
     const rawRemoteJid = typeof message.key?.remoteJid === "string" ? message.key.remoteJid : "";
@@ -511,10 +558,13 @@ export class WhatsAppService {
       return null;
     }
 
-    const remoteJid = extractDirectPhoneJid(rawRemoteJidAlt) ?? extractDirectPhoneJid(rawRemoteJid);
+    const normalizedPrimaryJid = extractDirectPhoneJid(rawRemoteJid);
+    const normalizedAltJid = extractDirectPhoneJid(rawRemoteJidAlt);
+    const remoteJid = normalizedAltJid ?? normalizedPrimaryJid;
     if (!remoteJid) {
       return null;
     }
+    const remoteJidAlt = normalizedAltJid && normalizedPrimaryJid && normalizedAltJid !== normalizedPrimaryJid ? normalizedPrimaryJid : null;
 
     const waMessageId = typeof message.key?.id === "string" ? message.key.id : "";
     if (!waMessageId) return null;
@@ -523,7 +573,29 @@ export class WhatsAppService {
     if (!fromNumber) return null;
 
     const baileys = await this.loadBaileys();
-    const content = readNormalizedMessageContent(baileys, message);
+    if (!message.message) {
+      console.warn("Mensagem recebida sem payload utilizavel no atendimento:", {
+        remoteJid,
+        waMessageId,
+        upsertType: upsertType ?? null,
+        messageStubType: message.messageStubType ?? null
+      });
+      return null;
+    }
+
+    const normalized = baileys.normalizeMessageContent(message.message);
+    const contentType = baileys.getContentType(normalized);
+    if (!contentType) {
+      console.warn("Mensagem recebida sem tipo de conteudo utilizavel no atendimento:", {
+        remoteJid,
+        waMessageId,
+        upsertType: upsertType ?? null,
+        messageStubType: message.messageStubType ?? null
+      });
+      return null;
+    }
+
+    const content = readNormalizedMessageContent(baileys, normalized);
     const messageType = detectIncomingMessageTypeFromContent(content);
     const mediaMetadata = readIncomingMediaMetadata(content);
     const mediaBuffer = await this.downloadIncomingMedia(message, messageType);
@@ -538,7 +610,7 @@ export class WhatsAppService {
     return {
       waMessageId,
       remoteJid,
-      remoteJidAlt: null,
+      remoteJidAlt,
       fromNumber,
       pushName: typeof message.pushName === "string" && message.pushName.trim() ? message.pushName.trim() : null,
       text: extractIncomingMessageTextFromContent(content),
@@ -569,10 +641,9 @@ export class WhatsAppService {
 
 function readNormalizedMessageContent(
   baileys: typeof import("@whiskeysockets/baileys"),
-  message: WAMessage
+  normalizedMessage: WAMessage["message"]
 ): Record<string, unknown> {
-  const normalized = baileys.normalizeMessageContent(message.message);
-  const content = baileys.extractMessageContent(normalized) ?? normalized;
+  const content = baileys.extractMessageContent(normalizedMessage) ?? normalizedMessage;
   return (content ?? {}) as Record<string, unknown>;
 }
 
@@ -657,6 +728,68 @@ function extractPhoneNumberFromJid(jid: string | null | undefined): string | nul
 function extractDirectPhoneJid(jid: string | null | undefined): string | null {
   const phoneNumber = extractPhoneNumberFromJid(jid);
   return phoneNumber ? `${phoneNumber}@s.whatsapp.net` : null;
+}
+
+function extractLookupPhoneDigits(value: string): string | null {
+  if (!value) return null;
+
+  const normalizedLower = value.toLowerCase();
+  if (normalizedLower.endsWith("@s.whatsapp.net")) {
+    const atIndex = value.indexOf("@");
+    if (atIndex <= 0) {
+      return null;
+    }
+
+    const localPart = value.slice(0, atIndex);
+    const phonePart = localPart.split(":")[0] ?? localPart;
+    const digits = phonePart.replace(/\D/g, "");
+    return digits || null;
+  }
+
+  if (value.includes("@")) {
+    return null;
+  }
+
+  const digits = value.replace(/\D/g, "");
+  return digits || null;
+}
+
+function buildLookupCandidateNumbers(phoneNumber: string): string[] {
+  if (!phoneNumber.startsWith("55")) {
+    return [phoneNumber];
+  }
+
+  const nationalNumber = phoneNumber.slice(2);
+  if (nationalNumber.length !== 10 && nationalNumber.length !== 11) {
+    return [phoneNumber];
+  }
+
+  const ddd = nationalNumber.slice(0, 2);
+  const subscriber = nationalNumber.slice(2);
+  if (!/^\d{2}$/.test(ddd)) {
+    return [phoneNumber];
+  }
+
+  if (subscriber.length === 9 && subscriber.startsWith("9")) {
+    return uniqueStrings([phoneNumber, `55${ddd}${subscriber.slice(1)}`]);
+  }
+
+  if (subscriber.length === 8 && /^[6-9]/.test(subscriber)) {
+    return uniqueStrings([`55${ddd}9${subscriber}`, phoneNumber]);
+  }
+
+  return [phoneNumber];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
 }
 
 function readNestedText(value: unknown): string | null {

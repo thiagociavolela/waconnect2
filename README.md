@@ -50,7 +50,7 @@ Enviar o header `x-api-token: <API_TOKEN>` em todas as rotas `/api/*`.
 - `POST /api/disconnect` — encerra sessão e limpa auth.
 - `POST /api/clear-cache` — limpa cache/auth sem reiniciar.
 - `GET /api/status` — status da instância.
-- `POST /api/check-number` — verifica se número é WhatsApp.
+- `POST /api/check-number` — verifica se número é WhatsApp; para BR tenta variante com/sem nono dígito quando aplicável.
 - `POST /api/send/text` — envia texto `{ to, message, delay? }` (delay em segundos, mínimo 3s; padrão 3s).
 - `POST /api/send/media` — envia mídia multipart form-data (`file`, `to`, `kind?`, `caption?`).
 - `POST /api/send/contact` — envia vCard `{ to, name, phone }`.

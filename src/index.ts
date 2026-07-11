@@ -291,7 +291,12 @@ const swaggerOptions: SwaggerOptions = {
                     type: "object",
                     properties: {
                       exists: { type: "boolean" },
-                      jid: { type: "string" }
+                      jid: { type: "string" },
+                      input: { type: "string" },
+                      tried: {
+                        type: "array",
+                        items: { type: "string" }
+                      }
                     }
                   }
                 }
@@ -609,8 +614,7 @@ app.post("/api/check-number", trackApiEndpoint("check_number"), async (req: Requ
   if (!to) return res.status(400).json({ error: "Campo 'to' é obrigatório." });
   try {
     const result = await whatsapp.checkNumber(to);
-    const first = result?.[0];
-    res.json({ exists: !!(first && first.exists), jid: first?.jid });
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Falha ao checar número." });
@@ -635,7 +639,11 @@ app.post("/api/send/text", trackApiEndpoint("send_text"), async (req: Request, r
     const key = await whatsapp.sendText(payload);
     if (attendanceModule.isEnabled()) {
       try {
-        await attendanceModule.syncExternalTextMessage({ to, message, waMessageId: key?.id ?? null });
+        await attendanceModule.syncExternalTextMessage({
+          to: key?.remoteJid ?? to,
+          message,
+          waMessageId: key?.id ?? null
+        });
       } catch (attendanceError) {
         console.error("Falha ao sincronizar envio de texto no atendimento:", attendanceError);
       }
