@@ -859,8 +859,10 @@ app.post("/api/attendance/conversations/:id/reply", trackApiEndpoint("attendance
     };
 
     const agentName = parseOptionalBodyString(req.body?.agentName);
+    const replyToMessageId = parseOptionalBodyString(req.body?.replyToMessageId);
     const delaySeconds = req.body?.delaySeconds;
     if (agentName !== undefined) payload.agentName = agentName;
+    if (replyToMessageId !== undefined) payload.replyToMessageId = replyToMessageId;
     if (delaySeconds !== undefined && delaySeconds !== null && delaySeconds !== "") {
       payload.delaySeconds = Number(delaySeconds);
     }
@@ -892,8 +894,10 @@ app.post("/api/attendance/conversations/:id/media", trackApiEndpoint("attendance
 
     const caption = parseOptionalBodyString(req.body?.caption);
     const agentName = parseOptionalBodyString(req.body?.agentName);
+    const replyToMessageId = parseOptionalBodyString(req.body?.replyToMessageId);
     if (caption !== undefined) payload.caption = caption;
     if (agentName !== undefined) payload.agentName = agentName;
+    if (replyToMessageId !== undefined) payload.replyToMessageId = replyToMessageId;
 
     const message = await attendanceModule.sendMediaReply(getRouteParam(req.params.id), payload);
     res.status(201).json(message);

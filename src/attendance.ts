@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { EventEmitter } from "events";
 import fs from "fs/promises";
+import type { WAMessage } from "@whiskeysockets/baileys";
 import mysql, { Pool, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import path from "path";
 import { APP_TIMEZONE_OFFSET, appDateTimeToMysql, mysqlAppToIso, nowApp } from "./timezone";
@@ -32,6 +33,7 @@ export interface AttendanceReplyInput {
   message: string;
   agentName?: string;
   delaySeconds?: number;
+  replyToMessageId?: string;
 }
 
 export interface AttendanceMediaReplyInput {
@@ -41,6 +43,7 @@ export interface AttendanceMediaReplyInput {
   fileName?: string;
   caption?: string;
   agentName?: string;
+  replyToMessageId?: string;
 }
 
 export interface AttendanceNoteInput {
@@ -83,6 +86,12 @@ export interface AttendanceMessageRecord {
   mediaUrl: string | null;
   waMessageId: string | null;
   agentName: string | null;
+  replyToMessageId: string | null;
+  quotedWaMessageId: string | null;
+  quotedMessageText: string | null;
+  quotedMessageType: AttendanceMessageType | null;
+  quotedMediaUrl: string | null;
+  quotedAuthor: string | null;
   createdAt: string;
 }
 
@@ -145,6 +154,12 @@ interface AttendanceMessageRow extends RowDataPacket {
   media_url: string | null;
   wa_message_id: string | null;
   agent_name: string | null;
+  reply_to_message_id: string | null;
+  quoted_wa_message_id: string | null;
+  quoted_message_text: string | null;
+  quoted_message_type: AttendanceMessageType | null;
+  quoted_media_url: string | null;
+  quoted_author: string | null;
   created_at: string;
 }
 
@@ -173,6 +188,20 @@ interface AttendanceAgentSummaryRow extends RowDataPacket {
   waiting_agent_count: number | string | null;
   closed_count: number | string | null;
   unread_total: number | string | null;
+}
+
+interface AttendanceQuotedMessageSnapshot {
+  replyToMessageId: string | null;
+  quotedWaMessageId: string | null;
+  quotedMessageText: string | null;
+  quotedMessageType: AttendanceMessageType | null;
+  quotedMediaUrl: string | null;
+  quotedAuthor: string | null;
+}
+
+interface AttendanceResolvedQuotedMessage {
+  snapshot: AttendanceQuotedMessageSnapshot;
+  nativeQuoted: WAMessage | null;
 }
 
 const SUPPORTED_ATTENDANCE_JID_SQL = "contact_jid LIKE '%@s.whatsapp.net'";
@@ -210,9 +239,20 @@ CREATE TABLE IF NOT EXISTS attendance_messages (
   media_url TEXT NULL,
   wa_message_id VARCHAR(180) NULL,
   agent_name VARCHAR(120) NULL,
+  reply_to_message_id CHAR(36) NULL,
+  quoted_wa_message_id VARCHAR(180) NULL,
+  quoted_message_text TEXT NULL,
+  quoted_message_type VARCHAR(20) NULL,
+  quoted_media_url TEXT NULL,
+  quoted_author VARCHAR(150) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uniq_attendance_wa_message_id (wa_message_id),
+  KEY idx_attendance_messages_reply_to (reply_to_message_id),
+  KEY idx_attendance_messages_quoted_wa (quoted_wa_message_id),
   KEY idx_attendance_messages_conversation_time (conversation_id, created_at),
+  CONSTRAINT fk_attendance_messages_reply_to
+    FOREIGN KEY (reply_to_message_id) REFERENCES attendance_messages(id)
+    ON DELETE SET NULL,
   CONSTRAINT fk_attendance_messages_conversation
     FOREIGN KEY (conversation_id) REFERENCES attendance_conversations(id)
     ON DELETE CASCADE
@@ -452,7 +492,9 @@ export class AttendanceModule {
     }
 
     const [rows] = await pool.execute<AttendanceMessageRow[]>(
-      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
+      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name,
+              reply_to_message_id, quoted_wa_message_id, quoted_message_text, quoted_message_type, quoted_media_url, quoted_author,
+              created_at
          FROM attendance_messages
         WHERE conversation_id = ?
         ORDER BY created_at ASC
@@ -557,11 +599,20 @@ export class AttendanceModule {
       throw new AttendanceValidationError("Campo 'delaySeconds' deve ser numerico.");
     }
 
-    const sendPayload =
+    const sendPayload: {
+      to: string;
+      message: string;
+      delaySeconds?: number;
+      quoted?: WAMessage;
+    } =
       delaySeconds !== undefined
         ? { to: conversation.contactNumber, message, delaySeconds: Math.max(3, delaySeconds) }
         : { to: conversation.contactNumber, message };
 
+    const quotedResolution = await this.resolveQuotedMessageForReply(conversation, input.replyToMessageId);
+    if (quotedResolution.nativeQuoted) {
+      sendPayload.quoted = quotedResolution.nativeQuoted;
+    }
     const key = await this.whatsapp.sendText(sendPayload);
     const resolvedContactJid = normalizeSupportedAttendanceJid(typeof key?.remoteJid === "string" ? key.remoteJid : null);
     const resolvedContactNumber = resolvedContactJid ? extractPhoneNumberFromAttendanceJid(resolvedContactJid) : null;
@@ -570,7 +621,8 @@ export class AttendanceModule {
       agentName: input.agentName,
       waMessageId: key?.id,
       contactJid: resolvedContactJid,
-      contactNumber: resolvedContactNumber
+      contactNumber: resolvedContactNumber,
+      quoted: quotedResolution.snapshot
     });
   }
 
@@ -597,6 +649,7 @@ export class AttendanceModule {
       mimetype?: string;
       fileName?: string;
       caption?: string;
+      quoted?: WAMessage;
     } = {
       to: conversation.contactNumber,
       kind,
@@ -606,6 +659,10 @@ export class AttendanceModule {
     if (fileName) sendPayload.fileName = fileName;
     if (caption) sendPayload.caption = caption;
 
+    const quotedResolution = await this.resolveQuotedMessageForReply(conversation, input.replyToMessageId);
+    if (quotedResolution.nativeQuoted) {
+      sendPayload.quoted = quotedResolution.nativeQuoted;
+    }
     const key = await this.whatsapp.sendMedia(sendPayload);
 
     const resolvedContactJid = normalizeSupportedAttendanceJid(typeof key?.remoteJid === "string" ? key.remoteJid : null);
@@ -631,9 +688,26 @@ export class AttendanceModule {
 
     await pool.execute<ResultSetHeader>(
       `INSERT INTO attendance_messages (
-        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
-      ) VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?)`,
-      [messageId, conversation.id, kind, previewText, mediaUrl, waMessageId, agentName, nowDb]
+        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name,
+        reply_to_message_id, quoted_wa_message_id, quoted_message_text, quoted_message_type, quoted_media_url, quoted_author,
+        created_at
+      ) VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        messageId,
+        conversation.id,
+        kind,
+        previewText,
+        mediaUrl,
+        waMessageId,
+        agentName,
+        quotedResolution.snapshot.replyToMessageId,
+        quotedResolution.snapshot.quotedWaMessageId,
+        quotedResolution.snapshot.quotedMessageText,
+        quotedResolution.snapshot.quotedMessageType,
+        quotedResolution.snapshot.quotedMediaUrl,
+        quotedResolution.snapshot.quotedAuthor,
+        nowDb
+      ]
     );
 
     await pool.execute<ResultSetHeader>(
@@ -765,12 +839,29 @@ export class AttendanceModule {
     const text = message.text ?? labelForMessageType(message.messageType);
     const nextStatus = resolveInboundConversationStatus(conversation.status, conversation.assignedAgent);
     const mediaUrl = await this.persistInboundMediaAsset(message);
+    const quotedSnapshot = await this.resolveQuotedMessageFromInbound(conversation, message);
 
     await this.pool.execute<ResultSetHeader>(
       `INSERT INTO attendance_messages (
-        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
-      ) VALUES (?, ?, 'inbound', ?, ?, ?, ?, NULL, ?)`,
-      [messageId, conversation.id, message.messageType, text, mediaUrl, waMessageId, nowDb]
+        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name,
+        reply_to_message_id, quoted_wa_message_id, quoted_message_text, quoted_message_type, quoted_media_url, quoted_author,
+        created_at
+      ) VALUES (?, ?, 'inbound', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        messageId,
+        conversation.id,
+        message.messageType,
+        text,
+        mediaUrl,
+        waMessageId,
+        quotedSnapshot.replyToMessageId,
+        quotedSnapshot.quotedWaMessageId,
+        quotedSnapshot.quotedMessageText,
+        quotedSnapshot.quotedMessageType,
+        quotedSnapshot.quotedMediaUrl,
+        quotedSnapshot.quotedAuthor,
+        nowDb
+      ]
     );
 
     await this.pool.execute<ResultSetHeader>(
@@ -800,12 +891,14 @@ export class AttendanceModule {
       agentName?: string | null | undefined;
       contactJid?: string | null | undefined;
       contactNumber?: string | null | undefined;
+      quoted?: AttendanceQuotedMessageSnapshot;
     }
   ): Promise<AttendanceMessageRecord> {
     const pool = this.requirePool();
     const targetContactJid = normalizeSupportedAttendanceJid(input.contactJid) ?? conversation.contactJid;
     const targetContactNumber = input.contactNumber?.trim() || extractPhoneNumberFromAttendanceJid(targetContactJid) || conversation.contactNumber;
     const waMessageId = buildExternalMessageId(targetContactJid, input.waMessageId);
+    const quotedSnapshot = input.quoted ?? emptyQuotedMessageSnapshot();
     if (waMessageId) {
       const existing = await this.getMessageByExternalId(waMessageId);
       if (existing) {
@@ -819,9 +912,24 @@ export class AttendanceModule {
 
     await pool.execute<ResultSetHeader>(
       `INSERT INTO attendance_messages (
-        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
-      ) VALUES (?, ?, 'outbound', 'text', ?, NULL, ?, ?, ?)`,
-      [messageId, conversation.id, input.message, waMessageId, agentName, nowDb]
+        id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name,
+        reply_to_message_id, quoted_wa_message_id, quoted_message_text, quoted_message_type, quoted_media_url, quoted_author,
+        created_at
+      ) VALUES (?, ?, 'outbound', 'text', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        messageId,
+        conversation.id,
+        input.message,
+        waMessageId,
+        agentName,
+        quotedSnapshot.replyToMessageId,
+        quotedSnapshot.quotedWaMessageId,
+        quotedSnapshot.quotedMessageText,
+        quotedSnapshot.quotedMessageType,
+        quotedSnapshot.quotedMediaUrl,
+        quotedSnapshot.quotedAuthor,
+        nowDb
+      ]
     );
 
     await pool.execute<ResultSetHeader>(
@@ -978,7 +1086,9 @@ export class AttendanceModule {
   private async getMessageById(id: string): Promise<AttendanceMessageRecord | null> {
     const pool = this.requirePool();
     const [rows] = await pool.execute<AttendanceMessageRow[]>(
-      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
+      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name,
+              reply_to_message_id, quoted_wa_message_id, quoted_message_text, quoted_message_type, quoted_media_url, quoted_author,
+              created_at
          FROM attendance_messages
         WHERE id = ?
         LIMIT 1`,
@@ -990,13 +1100,72 @@ export class AttendanceModule {
   private async getMessageByExternalId(waMessageId: string): Promise<AttendanceMessageRecord | null> {
     const pool = this.requirePool();
     const [rows] = await pool.execute<AttendanceMessageRow[]>(
-      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name, created_at
+      `SELECT id, conversation_id, direction, message_type, message_text, media_url, wa_message_id, agent_name,
+              reply_to_message_id, quoted_wa_message_id, quoted_message_text, quoted_message_type, quoted_media_url, quoted_author,
+              created_at
          FROM attendance_messages
         WHERE wa_message_id = ?
         LIMIT 1`,
       [waMessageId]
     );
     return rows[0] ? mapMessageRow(rows[0]) : null;
+  }
+
+  private async resolveQuotedMessageForReply(
+    conversation: AttendanceConversationRecord,
+    replyToMessageId: string | undefined
+  ): Promise<AttendanceResolvedQuotedMessage> {
+    const normalizedReplyToMessageId = sanitizeOptional(replyToMessageId);
+    if (!normalizedReplyToMessageId) {
+      return { snapshot: emptyQuotedMessageSnapshot(), nativeQuoted: null };
+    }
+
+    const targetMessage = await this.getMessageById(normalizedReplyToMessageId);
+    if (!targetMessage || targetMessage.conversationId !== conversation.id) {
+      throw new AttendanceValidationError("Mensagem citada nao encontrada para esta conversa.");
+    }
+
+    return {
+      snapshot: this.buildQuotedSnapshotFromMessage(conversation, targetMessage),
+      nativeQuoted: buildNativeQuotedMessage(targetMessage)
+    };
+  }
+
+  private async resolveQuotedMessageFromInbound(
+    conversation: AttendanceConversationRecord,
+    message: IncomingWhatsAppMessage
+  ): Promise<AttendanceQuotedMessageSnapshot> {
+    if (!message.quotedWaMessageId) {
+      return emptyQuotedMessageSnapshot();
+    }
+
+    const linkedMessage = await this.getMessageByExternalId(message.quotedWaMessageId);
+    if (linkedMessage && linkedMessage.conversationId === conversation.id) {
+      return this.buildQuotedSnapshotFromMessage(conversation, linkedMessage);
+    }
+
+    return {
+      replyToMessageId: null,
+      quotedWaMessageId: message.quotedWaMessageId,
+      quotedMessageText: normalizeQuotedTextPreview(message.quotedMessageText, message.quotedMessageType),
+      quotedMessageType: normalizeQuotedMessageType(message.quotedMessageType),
+      quotedMediaUrl: null,
+      quotedAuthor: resolveInboundQuotedAuthor(conversation, message)
+    };
+  }
+
+  private buildQuotedSnapshotFromMessage(
+    conversation: AttendanceConversationRecord,
+    message: AttendanceMessageRecord
+  ): AttendanceQuotedMessageSnapshot {
+    return {
+      replyToMessageId: message.id,
+      quotedWaMessageId: message.waMessageId,
+      quotedMessageText: normalizeQuotedTextPreview(message.messageText, message.messageType),
+      quotedMessageType: normalizeQuotedMessageType(message.messageType),
+      quotedMediaUrl: message.mediaUrl,
+      quotedAuthor: resolveQuotedAuthorFromRecord(conversation, message)
+    };
   }
 
   private async getNoteById(id: string): Promise<AttendanceNoteRecord | null> {
@@ -1023,6 +1192,12 @@ export class AttendanceModule {
   private async ensureOptionalSchema() {
     const pool = this.requirePool();
     await ensureColumn(pool, "attendance_conversations", "tags_json", "ALTER TABLE attendance_conversations ADD COLUMN tags_json JSON NULL AFTER assigned_agent");
+    await ensureColumn(pool, "attendance_messages", "reply_to_message_id", "ALTER TABLE attendance_messages ADD COLUMN reply_to_message_id CHAR(36) NULL AFTER agent_name");
+    await ensureColumn(pool, "attendance_messages", "quoted_wa_message_id", "ALTER TABLE attendance_messages ADD COLUMN quoted_wa_message_id VARCHAR(180) NULL AFTER reply_to_message_id");
+    await ensureColumn(pool, "attendance_messages", "quoted_message_text", "ALTER TABLE attendance_messages ADD COLUMN quoted_message_text TEXT NULL AFTER quoted_wa_message_id");
+    await ensureColumn(pool, "attendance_messages", "quoted_message_type", "ALTER TABLE attendance_messages ADD COLUMN quoted_message_type VARCHAR(20) NULL AFTER quoted_message_text");
+    await ensureColumn(pool, "attendance_messages", "quoted_media_url", "ALTER TABLE attendance_messages ADD COLUMN quoted_media_url TEXT NULL AFTER quoted_message_type");
+    await ensureColumn(pool, "attendance_messages", "quoted_author", "ALTER TABLE attendance_messages ADD COLUMN quoted_author VARCHAR(150) NULL AFTER quoted_media_url");
   }
 
   private async migrateLegacyStatuses() {
@@ -1102,6 +1277,12 @@ function mapMessageRow(row: AttendanceMessageRow): AttendanceMessageRecord {
     mediaUrl: row.media_url,
     waMessageId: row.wa_message_id,
     agentName: row.agent_name,
+    replyToMessageId: row.reply_to_message_id,
+    quotedWaMessageId: row.quoted_wa_message_id,
+    quotedMessageText: row.quoted_message_text,
+    quotedMessageType: row.quoted_message_type,
+    quotedMediaUrl: row.quoted_media_url,
+    quotedAuthor: row.quoted_author,
     createdAt: mysqlAppToIso(row.created_at)
   };
 }
@@ -1230,6 +1411,146 @@ function uniqueAttendanceStrings(values: Array<string | null | undefined>): stri
     }
   }
   return Array.from(unique.values());
+}
+
+function buildNativeQuotedMessage(message: AttendanceMessageRecord): WAMessage | null {
+  const externalId = parseExternalMessageId(message.waMessageId);
+  if (!externalId) {
+    return null;
+  }
+
+  const quotedContent = buildNativeQuotedMessageContent(message);
+  if (!quotedContent) {
+    return null;
+  }
+
+  return {
+    key: {
+      remoteJid: externalId.remoteJid,
+      fromMe: message.direction === "outbound",
+      id: externalId.messageId
+    },
+    message: quotedContent
+  } as WAMessage;
+}
+
+function buildNativeQuotedMessageContent(message: AttendanceMessageRecord): Record<string, unknown> | null {
+  const normalizedText = normalizeQuotedTextPreview(message.messageText, message.messageType) ?? "[Mensagem]";
+
+  if (message.messageType === "text" || message.messageType === "unknown") {
+    return { conversation: normalizedText };
+  }
+  if (message.messageType === "image") {
+    return { imageMessage: { caption: normalizedText } };
+  }
+  if (message.messageType === "video") {
+    return { videoMessage: { caption: normalizedText } };
+  }
+  if (message.messageType === "audio") {
+    return { audioMessage: {} };
+  }
+  if (message.messageType === "document") {
+    return { documentMessage: { caption: normalizedText } };
+  }
+  if (message.messageType === "sticker") {
+    return { stickerMessage: {} };
+  }
+
+  return null;
+}
+
+function parseExternalMessageId(value: string | null | undefined): { remoteJid: string; messageId: string } | null {
+  const normalized = sanitizeOptional(value ?? undefined);
+  if (!normalized) {
+    return null;
+  }
+
+  const separatorIndex = normalized.lastIndexOf(":");
+  if (separatorIndex <= 0 || separatorIndex >= normalized.length - 1) {
+    return null;
+  }
+
+  const remoteJid = normalized.slice(0, separatorIndex).trim();
+  const messageId = normalized.slice(separatorIndex + 1).trim();
+  if (!remoteJid || !messageId) {
+    return null;
+  }
+
+  return { remoteJid, messageId };
+}
+
+function emptyQuotedMessageSnapshot(): AttendanceQuotedMessageSnapshot {
+  return {
+    replyToMessageId: null,
+    quotedWaMessageId: null,
+    quotedMessageText: null,
+    quotedMessageType: null,
+    quotedMediaUrl: null,
+    quotedAuthor: null
+  };
+}
+
+function normalizeQuotedMessageType(
+  value: AttendanceMessageType | IncomingWhatsAppMessage["quotedMessageType"] | null | undefined
+): AttendanceMessageType | null {
+  if (
+    value === "text" ||
+    value === "image" ||
+    value === "video" ||
+    value === "audio" ||
+    value === "document" ||
+    value === "sticker" ||
+    value === "unknown"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function normalizeQuotedTextPreview(
+  text: string | null | undefined,
+  type: AttendanceMessageType | IncomingWhatsAppMessage["quotedMessageType"] | null | undefined
+): string | null {
+  const normalizedText = sanitizeOptional(text ?? undefined);
+  if (normalizedText) {
+    return normalizedText;
+  }
+
+  const normalizedType = normalizeQuotedMessageType(type);
+  if (!normalizedType || normalizedType === "text") {
+    return null;
+  }
+
+  return normalizedType === "unknown" ? "[Mensagem recebida]" : labelForMessageType(normalizedType);
+}
+
+function resolveQuotedAuthorFromRecord(
+  conversation: AttendanceConversationRecord,
+  message: AttendanceMessageRecord
+): string | null {
+  if (message.direction === "outbound") {
+    return sanitizeOptional(message.agentName ?? undefined) ?? "Voce";
+  }
+
+  return sanitizeOptional(conversation.contactName ?? undefined) ?? sanitizeOptional(conversation.contactNumber ?? undefined);
+}
+
+function resolveInboundQuotedAuthor(
+  conversation: AttendanceConversationRecord,
+  message: IncomingWhatsAppMessage
+): string | null {
+  const quotedParticipantJid = normalizeSupportedAttendanceJid(message.quotedParticipantJid);
+  if (!quotedParticipantJid) {
+    return null;
+  }
+
+  if (quotedParticipantJid === message.remoteJid) {
+    return sanitizeOptional(message.pushName ?? undefined)
+      ?? sanitizeOptional(conversation.contactName ?? undefined)
+      ?? sanitizeOptional(conversation.contactNumber ?? undefined);
+  }
+
+  return null;
 }
 
 function buildExternalMessageId(remoteJid: string, messageId: string | null | undefined): string | null {

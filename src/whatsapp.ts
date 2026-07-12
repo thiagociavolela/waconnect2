@@ -12,6 +12,7 @@ export interface SendTextPayload {
   message: string;
   /** Delay desejado em segundos entre mensagens. Mínimo aplicado: 3s. */
   delaySeconds?: number;
+  quoted?: WAMessage;
 }
 
 export interface SendMediaPayload {
@@ -21,6 +22,7 @@ export interface SendMediaPayload {
   mimetype?: string;
   fileName?: string;
   caption?: string;
+  quoted?: WAMessage;
 }
 
 export interface SendContactPayload {
@@ -56,6 +58,10 @@ export interface IncomingWhatsAppMessage {
   mediaBuffer?: Buffer | null;
   mediaMimeType?: string | null;
   mediaFileName?: string | null;
+  quotedWaMessageId?: string | null;
+  quotedMessageText?: string | null;
+  quotedMessageType?: IncomingWhatsAppMessageType | null;
+  quotedParticipantJid?: string | null;
 }
 
 type IncomingMessageListener = (message: IncomingWhatsAppMessage) => void | Promise<void>;
@@ -412,7 +418,7 @@ export class WhatsAppService {
     return resolution.jid ?? resolution.tried[0] ?? this.formatJid(to);
   }
 
-  async sendText({ to, message, delaySeconds }: SendTextPayload) {
+  async sendText({ to, message, delaySeconds, quoted }: SendTextPayload) {
     const jid = await this.resolveSendJid(to);
     const requestedDelayMs = Number.isFinite(delaySeconds) ? (delaySeconds as number) * 1000 : 3000;
     return this.scheduleSend(
@@ -440,14 +446,14 @@ export class WhatsAppService {
             }
           }
           const content: AnyMessageContent = linkPreview ? { text: message, linkPreview } : { text: message };
-          const result = await sock.sendMessage(jid, content);
+          const result = quoted ? await sock.sendMessage(jid, content, { quoted }) : await sock.sendMessage(jid, content);
           return result?.key as WAMessageKey;
         }),
       requestedDelayMs
     );
   }
 
-  async sendMedia({ to, buffer, kind, mimetype, fileName, caption }: SendMediaPayload) {
+  async sendMedia({ to, buffer, kind, mimetype, fileName, caption, quoted }: SendMediaPayload) {
     const jid = await this.resolveSendJid(to);
     return this.scheduleSend(jid, () =>
       this.withRetry(async () => {
@@ -474,7 +480,7 @@ export class WhatsAppService {
             break;
         }
 
-        const result = await sock.sendMessage(jid, content);
+        const result = quoted ? await sock.sendMessage(jid, content, { quoted }) : await sock.sendMessage(jid, content);
         return result?.key as WAMessageKey;
       })
     );
@@ -598,6 +604,7 @@ export class WhatsAppService {
     const content = readNormalizedMessageContent(baileys, normalized);
     const messageType = detectIncomingMessageTypeFromContent(content);
     const mediaMetadata = readIncomingMediaMetadata(content);
+    const quotedContext = readQuotedContextFromContent(content, remoteJid);
     const mediaBuffer = await this.downloadIncomingMedia(message, messageType);
     if (messageType === "unknown") {
       console.warn("Mensagem recebida com formato nao mapeado no atendimento:", {
@@ -617,7 +624,11 @@ export class WhatsAppService {
       messageType,
       mediaBuffer,
       mediaMimeType: mediaMetadata?.mimetype ?? null,
-      mediaFileName: mediaMetadata?.fileName ?? null
+      mediaFileName: mediaMetadata?.fileName ?? null,
+      quotedWaMessageId: quotedContext?.waMessageId ?? null,
+      quotedMessageText: quotedContext?.text ?? null,
+      quotedMessageType: quotedContext?.messageType ?? null,
+      quotedParticipantJid: quotedContext?.participantJid ?? null
     };
   }
 
@@ -693,6 +704,55 @@ function readIncomingMediaMetadata(
     mimetype: typeof mediaContent.mimetype === "string" && mediaContent.mimetype.trim() ? mediaContent.mimetype.trim() : null,
     fileName: typeof mediaContent.fileName === "string" && mediaContent.fileName.trim() ? mediaContent.fileName.trim() : null
   };
+}
+
+function readQuotedContextFromContent(
+  content: Record<string, unknown>,
+  remoteJid: string
+): { waMessageId: string | null; text: string | null; messageType: IncomingWhatsAppMessageType | null; participantJid: string | null } | null {
+  const contextInfo = readMessageContextInfo(content);
+  if (!contextInfo) {
+    return null;
+  }
+
+  const stanzaId = readNestedString(contextInfo, "stanzaId");
+  const quotedMessage = readNestedRecord(contextInfo.quotedMessage);
+  const participantJid =
+    extractDirectPhoneJid(readNestedString(contextInfo, "participant"))
+    ?? extractDirectPhoneJid(readNestedString(contextInfo, "remoteJid"))
+    ?? remoteJid;
+
+  return {
+    waMessageId: stanzaId ? buildExternalMessageId(participantJid, stanzaId) : null,
+    text: quotedMessage ? extractIncomingMessageTextFromContent(quotedMessage) : null,
+    messageType: quotedMessage ? detectIncomingMessageTypeFromContent(quotedMessage) : null,
+    participantJid
+  };
+}
+
+function readMessageContextInfo(content: Record<string, unknown>): Record<string, unknown> | null {
+  const candidates = [
+    content.extendedTextMessage,
+    content.imageMessage,
+    content.videoMessage,
+    content.audioMessage,
+    content.documentMessage,
+    content.stickerMessage,
+    content.buttonsResponseMessage,
+    content.templateButtonReplyMessage,
+    content.listResponseMessage,
+    content.interactiveResponseMessage
+  ];
+
+  for (const candidate of candidates) {
+    const record = readNestedRecord(candidate);
+    const contextInfo = readNestedRecord(record?.contextInfo);
+    if (contextInfo) {
+      return contextInfo;
+    }
+  }
+
+  return null;
 }
 
 function shouldIgnoreInboundJid(jid: string): boolean {
@@ -790,6 +850,14 @@ function uniqueStrings(values: string[]): string[] {
     result.push(value);
   }
   return result;
+}
+
+function buildExternalMessageId(remoteJid: string | null | undefined, messageId: string | null | undefined): string | null {
+  if (!remoteJid || !messageId) {
+    return null;
+  }
+
+  return `${remoteJid}:${messageId}`;
 }
 
 function readNestedText(value: unknown): string | null {
