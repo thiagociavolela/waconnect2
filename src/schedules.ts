@@ -28,6 +28,7 @@ export interface CreateScheduleInput {
   scheduledAt: string;
   maxAttempts?: number;
   createdBy?: string;
+  conversationId?: string;
   externalRef?: string;
 }
 
@@ -43,6 +44,7 @@ export interface UpdateScheduleInput {
 
 export interface ListSchedulesFilters {
   status?: ScheduleStatus;
+  conversationId?: string;
   from?: string;
   to?: string;
   page?: number;
@@ -61,6 +63,7 @@ export interface ScheduleRecord {
   id: string;
   type: ScheduleType;
   to: string;
+  conversationId: string | null;
   message: string | null;
   payload: unknown;
   scheduledAt: string;
@@ -75,6 +78,16 @@ export interface ScheduleRecord {
   createdBy: string | null;
   externalRef: string | null;
   result: unknown;
+}
+
+export interface ConversationScheduleSummary {
+  conversationId: string;
+  hasActiveSchedule: boolean;
+  activeScheduleCount: number;
+  nextScheduleId: string | null;
+  nextScheduleAt: string | null;
+  nextScheduleMessage: string | null;
+  nextScheduleStatus: Extract<ScheduleStatus, "pending" | "paused" | "processing"> | null;
 }
 
 export interface ScheduleStats {
@@ -92,6 +105,7 @@ interface ScheduleRow extends RowDataPacket {
   id: string;
   type: ScheduleType;
   to_number: string;
+  conversation_id: string | null;
   message_text: string | null;
   payload_json: string | null;
   scheduled_at: string;
@@ -128,6 +142,7 @@ CREATE TABLE IF NOT EXISTS message_schedules (
   id CHAR(36) NOT NULL PRIMARY KEY,
   type VARCHAR(20) NOT NULL DEFAULT 'text',
   to_number VARCHAR(30) NOT NULL,
+  conversation_id CHAR(36) NULL,
   message_text TEXT NULL,
   payload_json JSON NULL,
   scheduled_at DATETIME(3) NOT NULL,
@@ -142,10 +157,17 @@ CREATE TABLE IF NOT EXISTS message_schedules (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   created_by VARCHAR(100) NULL,
   external_ref VARCHAR(100) NULL,
+  KEY idx_schedule_conversation_status_time (conversation_id, status, scheduled_at),
   KEY idx_schedule_status_time (status, scheduled_at),
   KEY idx_schedule_external_ref (external_ref)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;
+
+const ACTIVE_SCHEDULE_STATUSES: Array<Extract<ScheduleStatus, "pending" | "paused" | "processing">> = [
+  "pending",
+  "paused",
+  "processing"
+];
 
 export class ScheduleValidationError extends Error {}
 
@@ -209,6 +231,8 @@ export class ScheduleModule {
       await this.pool.execute(CREATE_SCHEDULES_TABLE_SQL);
     }
 
+    await this.ensureOptionalSchema();
+
     if (this.config.workerEnabled) {
       this.workerTimer = setInterval(() => {
         void this.processDueSchedules();
@@ -238,6 +262,7 @@ export class ScheduleModule {
     const scheduledAt = parseScheduleDate(input.scheduledAt, "scheduledAt");
     const maxAttempts = input.maxAttempts ?? 3;
     const createdBy = sanitizeOptional(input.createdBy);
+    const conversationId = sanitizeOptional(input.conversationId);
     const externalRef = sanitizeOptional(input.externalRef);
 
     if (type !== "text") {
@@ -263,10 +288,10 @@ export class ScheduleModule {
 
     await pool.execute<ResultSetHeader>(
       `INSERT INTO message_schedules (
-        id, type, to_number, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
+        id, type, to_number, conversation_id, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
         last_error, processing_at, sent_at, result_json, created_at, updated_at, created_by, external_ref
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
-      [id, type, to, message, null, scheduledAtDb, maxAttempts, nowDb, nowDb, createdBy, externalRef]
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
+      [id, type, to, conversationId, message, null, scheduledAtDb, maxAttempts, nowDb, nowDb, createdBy, externalRef]
     );
 
     const created = await this.getScheduleById(id);
@@ -280,7 +305,7 @@ export class ScheduleModule {
   async getScheduleById(id: string): Promise<ScheduleRecord | null> {
     const pool = this.requirePool();
     const [rows] = await pool.execute<ScheduleRow[]>(
-      `SELECT id, type, to_number, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
+      `SELECT id, type, to_number, conversation_id, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
               last_error, processing_at, sent_at, result_json, created_at, updated_at, created_by, external_ref
          FROM message_schedules
         WHERE id = ?
@@ -303,6 +328,10 @@ export class ScheduleModule {
       where.push("status = ?");
       params.push(filters.status);
     }
+    if (filters.conversationId) {
+      where.push("conversation_id = ?");
+      params.push(filters.conversationId);
+    }
     if (filters.from) {
       where.push("scheduled_at >= ?");
       params.push(appDateTimeToMysql(parseScheduleDate(filters.from, "from")));
@@ -324,7 +353,7 @@ export class ScheduleModule {
     const safePage = Math.min(page, totalPages);
     const safeOffset = (safePage - 1) * pageSize;
     const [rows] = await pool.query<ScheduleRow[]>(
-      `SELECT id, type, to_number, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
+      `SELECT id, type, to_number, conversation_id, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
               last_error, processing_at, sent_at, result_json, created_at, updated_at, created_by, external_ref
          FROM message_schedules
          ${whereSql}
@@ -341,6 +370,110 @@ export class ScheduleModule {
       pageSize,
       totalPages
     };
+  }
+
+  async listConversationSchedules(
+    conversationId: string,
+    options: {
+      activeOnly?: boolean;
+      limit?: number;
+    } = {}
+  ): Promise<ScheduleRecord[]> {
+    const pool = this.requirePool();
+    const normalizedConversationId = conversationId.trim();
+    if (!normalizedConversationId) {
+      throw new ScheduleValidationError("Campo 'conversationId' e obrigatorio.");
+    }
+
+    const limit = Math.min(Math.max(options.limit ?? 25, 1), 200);
+    const params: unknown[] = [normalizedConversationId];
+    let statusSql = "";
+    if (options.activeOnly) {
+      statusSql = ` AND status IN (${ACTIVE_SCHEDULE_STATUSES.map(() => "?").join(", ")})`;
+      params.push(...ACTIVE_SCHEDULE_STATUSES);
+    }
+
+    const [rows] = await pool.query<ScheduleRow[]>(
+      `SELECT id, type, to_number, conversation_id, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
+              last_error, processing_at, sent_at, result_json, created_at, updated_at, created_by, external_ref
+         FROM message_schedules
+        WHERE conversation_id = ?
+          ${statusSql}
+        ORDER BY scheduled_at ASC, created_at ASC
+        LIMIT ?`,
+      [...params, limit]
+    );
+
+    return rows.map(mapScheduleRow);
+  }
+
+  async getConversationScheduleSummaries(conversationIds: string[]): Promise<Map<string, ConversationScheduleSummary>> {
+    const pool = this.requirePool();
+    const normalizedIds = Array.from(new Set(
+      (conversationIds || [])
+        .map((item) => item.trim())
+        .filter(Boolean)
+    ));
+    const result = new Map<string, ConversationScheduleSummary>();
+
+    if (!normalizedIds.length) {
+      return result;
+    }
+
+    const placeholders = normalizedIds.map(() => "?").join(", ");
+    const statusPlaceholders = ACTIVE_SCHEDULE_STATUSES.map(() => "?").join(", ");
+    const [rows] = await pool.query<ScheduleRow[]>(
+      `SELECT id, type, to_number, conversation_id, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
+              last_error, processing_at, sent_at, result_json, created_at, updated_at, created_by, external_ref
+         FROM message_schedules
+        WHERE conversation_id IN (${placeholders})
+          AND status IN (${statusPlaceholders})
+        ORDER BY conversation_id ASC, scheduled_at ASC, created_at ASC`,
+      [...normalizedIds, ...ACTIVE_SCHEDULE_STATUSES]
+    );
+
+    for (const conversationId of normalizedIds) {
+      result.set(conversationId, {
+        conversationId,
+        hasActiveSchedule: false,
+        activeScheduleCount: 0,
+        nextScheduleId: null,
+        nextScheduleAt: null,
+        nextScheduleMessage: null,
+        nextScheduleStatus: null
+      });
+    }
+
+    for (const row of rows) {
+      const conversationId = row.conversation_id?.trim();
+      if (!conversationId) {
+        continue;
+      }
+
+      const current: ConversationScheduleSummary = result.get(conversationId) ?? {
+        conversationId,
+        hasActiveSchedule: false,
+        activeScheduleCount: 0,
+        nextScheduleId: null,
+        nextScheduleAt: null,
+        nextScheduleMessage: null,
+        nextScheduleStatus: null
+      };
+
+      current.hasActiveSchedule = true;
+      current.activeScheduleCount += 1;
+
+      if (!current.nextScheduleId) {
+        current.nextScheduleId = row.id;
+        current.nextScheduleAt = mysqlAppToIso(row.scheduled_at);
+        current.nextScheduleMessage = row.message_text;
+        current.nextScheduleStatus = row.status as Extract<ScheduleStatus, "pending" | "paused" | "processing">;
+      }
+
+      result.set(conversationId, current);
+    }
+
+    return result;
   }
 
   async cancelSchedule(id: string): Promise<ScheduleRecord | null> {
@@ -524,6 +657,16 @@ export class ScheduleModule {
     return mapScheduleStatsRow(rows[0]);
   }
 
+  private async ensureOptionalSchema() {
+    const pool = this.requirePool();
+    if (!(await tableExists(pool, "message_schedules"))) {
+      return;
+    }
+
+    await ensureColumn(pool, "message_schedules", "conversation_id", "ALTER TABLE message_schedules ADD COLUMN conversation_id CHAR(36) NULL AFTER to_number");
+    await ensureIndex(pool, "message_schedules", "idx_schedule_conversation_status_time", "ALTER TABLE message_schedules ADD KEY idx_schedule_conversation_status_time (conversation_id, status, scheduled_at)");
+  }
+
   private requirePool(): Pool {
     if (!this.pool) {
       throw new Error("Módulo de agendamento não inicializado.");
@@ -569,7 +712,7 @@ export class ScheduleModule {
     const pool = this.requirePool();
     const nowDb = appDateTimeToMysql(nowApp());
     const [rows] = await pool.query<ScheduleRow[]>(
-      `SELECT id, type, to_number, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
+      `SELECT id, type, to_number, conversation_id, message_text, payload_json, scheduled_at, status, attempts, max_attempts,
               last_error, processing_at, sent_at, result_json, created_at, updated_at, created_by, external_ref
          FROM message_schedules
         WHERE status = 'pending'
@@ -678,6 +821,7 @@ function mapScheduleRow(row: ScheduleRow): ScheduleRecord {
     id: row.id,
     type: row.type,
     to: row.to_number,
+    conversationId: row.conversation_id,
     message: row.message_text,
     payload: parseJsonOrNull(row.payload_json),
     scheduledAt: mysqlAppToIso(row.scheduled_at),
@@ -763,5 +907,49 @@ function safeJsonStringify(value: unknown): string | null {
     return JSON.stringify(value);
   } catch {
     return JSON.stringify({ error: "Falha ao serializar resultado do provedor." });
+  }
+}
+
+async function tableExists(pool: Pool, tableName: string): Promise<boolean> {
+  const [rows] = await pool.execute<Array<RowDataPacket & { total: number | string }>>(
+    `SELECT COUNT(*) AS total
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+      LIMIT 1`,
+    [tableName]
+  );
+  return numericCell(rows[0]?.total) > 0;
+}
+
+async function ensureColumn(pool: Pool, tableName: string, columnName: string, alterSql: string) {
+  const [rows] = await pool.execute<Array<RowDataPacket & { total: number | string }>>(
+    `SELECT COUNT(*) AS total
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+      LIMIT 1`,
+    [tableName, columnName]
+  );
+
+  if (numericCell(rows[0]?.total) === 0) {
+    await pool.execute(alterSql);
+  }
+}
+
+async function ensureIndex(pool: Pool, tableName: string, indexName: string, alterSql: string) {
+  const [rows] = await pool.execute<Array<RowDataPacket & { total: number | string }>>(
+    `SELECT COUNT(*) AS total
+       FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND INDEX_NAME = ?
+      LIMIT 1`,
+    [tableName, indexName]
+  );
+
+  if (numericCell(rows[0]?.total) === 0) {
+    await pool.execute(alterSql);
   }
 }

@@ -10,6 +10,7 @@ import swaggerJSDoc, { Options as SwaggerOptions } from "swagger-jsdoc";
 import { ApiStatsService, EndpointStatsPeriod, TrackedEndpointKey } from "./api-stats";
 import {
   AttendanceMediaReplyInput,
+  AttendanceConversationRecord,
   AttendanceConversationStatus,
   AttendanceModule,
   AttendanceReplyInput,
@@ -18,6 +19,7 @@ import {
   loadAttendanceConfig
 } from "./attendance";
 import {
+  ConversationScheduleSummary,
   CreateScheduleInput,
   loadScheduleConfig,
   ScheduleModule,
@@ -67,6 +69,15 @@ const whatsapp = new WhatsAppService();
 const attendanceModule = new AttendanceModule(loadAttendanceConfig(), whatsapp);
 const scheduleModule = new ScheduleModule(loadScheduleConfig(), whatsapp);
 const apiStatsService = new ApiStatsService();
+
+type AttendanceConversationWithSchedule = AttendanceConversationRecord & {
+  hasActiveSchedule: boolean;
+  activeScheduleCount: number;
+  nextScheduleId: string | null;
+  nextScheduleAt: string | null;
+  nextScheduleMessage: string | null;
+  nextScheduleStatus: Extract<ScheduleStatus, "pending" | "paused" | "processing"> | null;
+};
 
 const swaggerOptions: SwaggerOptions = {
   definition: {
@@ -731,7 +742,7 @@ app.post("/api/attendance/conversations", trackApiEndpoint("attendance_create"),
     if (assignedAgent !== undefined) payload.assignedAgent = assignedAgent;
 
     const conversation = await attendanceModule.createOrOpenConversation(payload);
-    res.status(201).json(conversation);
+    res.status(201).json(await enrichAttendanceConversation(conversation));
   } catch (err) {
     handleAttendanceError(err, res, "Falha ao criar conversa de atendimento.");
   }
@@ -764,7 +775,7 @@ app.get("/api/attendance/conversations", trackApiEndpoint("attendance_list"), as
     if (parsedLimit !== undefined) filters.limit = parsedLimit;
 
     const conversations = await attendanceModule.listConversations(filters);
-    res.json(conversations);
+    res.json(await enrichAttendanceConversations(conversations));
   } catch (err) {
     handleAttendanceError(err, res, "Falha ao listar conversas de atendimento.");
   }
@@ -783,7 +794,7 @@ app.get("/api/attendance/conversations/:id/messages", trackApiEndpoint("attendan
     }
 
     const messages = await attendanceModule.listMessages(conversationId, parseAttendanceMessagesLimit(req.query.limit));
-    res.json({ conversation, messages });
+    res.json({ conversation: await enrichAttendanceConversation(conversation), messages });
   } catch (err) {
     handleAttendanceError(err, res, "Falha ao listar mensagens do atendimento.");
   }
@@ -925,6 +936,7 @@ app.post("/api/attendance/conversations/:id/schedule", trackApiEndpoint("attenda
       to: conversation.contactNumber,
       message: requireBodyString(req.body?.message, "message"),
       scheduledAt: requireBodyString(req.body?.scheduledAt, "scheduledAt"),
+      conversationId,
       externalRef: `attendance:${conversationId}:${crypto.randomUUID()}`
     };
 
@@ -943,6 +955,53 @@ app.post("/api/attendance/conversations/:id/schedule", trackApiEndpoint("attenda
       return handleScheduleError(err, res, "Falha ao criar agendamento do atendimento.");
     }
     handleAttendanceError(err, res, "Falha ao criar agendamento do atendimento.");
+  }
+});
+
+app.put("/api/attendance/conversations/:id/schedules/:scheduleId", trackApiEndpoint("attendance_schedule"), async (req: Request, res: Response) => {
+  if (!attendanceModule.isEnabled()) {
+    return res.status(503).json({ error: "Modulo de atendimento desabilitado. Configure ATTEND_DB_ENABLED=true." });
+  }
+  if (!scheduleModule.isEnabled()) {
+    return res.status(503).json({ error: "Modulo de agendamento desabilitado. Configure SCHED_DB_ENABLED=true e as flags do MySQL." });
+  }
+
+  try {
+    const conversationId = getRouteParam(req.params.id);
+    const scheduleId = getRouteParam(req.params.scheduleId);
+    const conversation = await attendanceModule.getConversationById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversa nao encontrada." });
+    }
+
+    const existingSchedule = await scheduleModule.getScheduleById(scheduleId);
+    if (!existingSchedule || existingSchedule.conversationId !== conversationId) {
+      return res.status(404).json({ error: "Agendamento nao encontrado para esta conversa." });
+    }
+
+    const payload: {
+      message?: string;
+      scheduledAt?: string;
+      status?: "pending" | "paused";
+    } = {};
+
+    if (req.body?.message !== undefined) payload.message = requireBodyString(req.body.message, "message");
+    if (req.body?.scheduledAt !== undefined) payload.scheduledAt = requireBodyString(req.body.scheduledAt, "scheduledAt");
+
+    const parsedStatus = parseAttendanceConversationScheduleStatus(req.body?.status);
+    if (parsedStatus) payload.status = parsedStatus;
+
+    const updatedSchedule = await scheduleModule.updateSchedule(scheduleId, payload);
+    if (!updatedSchedule) {
+      return res.status(404).json({ error: "Agendamento nao encontrado." });
+    }
+
+    res.json(updatedSchedule);
+  } catch (err) {
+    if (err instanceof ScheduleValidationError) {
+      return handleScheduleError(err, res, "Falha ao editar agendamento do atendimento.");
+    }
+    handleAttendanceError(err, res, "Falha ao editar agendamento do atendimento.");
   }
 });
 
@@ -1411,6 +1470,61 @@ function parseAttendanceTags(value: unknown): string[] {
   }
 
   return parsed;
+}
+
+function parseAttendanceConversationScheduleStatus(value: unknown): "pending" | "paused" | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return parseEditableScheduleStatus(value);
+}
+
+function emptyConversationScheduleSummary(conversationId: string): ConversationScheduleSummary {
+  return {
+    conversationId,
+    hasActiveSchedule: false,
+    activeScheduleCount: 0,
+    nextScheduleId: null,
+    nextScheduleAt: null,
+    nextScheduleMessage: null,
+    nextScheduleStatus: null
+  };
+}
+
+function applyConversationScheduleSummary(
+  conversation: AttendanceConversationRecord,
+  summary?: ConversationScheduleSummary
+): AttendanceConversationWithSchedule {
+  const safeSummary = summary ?? emptyConversationScheduleSummary(conversation.id);
+  return {
+    ...conversation,
+    hasActiveSchedule: safeSummary.hasActiveSchedule,
+    activeScheduleCount: safeSummary.activeScheduleCount,
+    nextScheduleId: safeSummary.nextScheduleId,
+    nextScheduleAt: safeSummary.nextScheduleAt,
+    nextScheduleMessage: safeSummary.nextScheduleMessage,
+    nextScheduleStatus: safeSummary.nextScheduleStatus
+  };
+}
+
+async function enrichAttendanceConversation(conversation: AttendanceConversationRecord): Promise<AttendanceConversationWithSchedule> {
+  const [enriched] = await enrichAttendanceConversations([conversation]);
+  return enriched ?? applyConversationScheduleSummary(conversation);
+}
+
+async function enrichAttendanceConversations(
+  conversations: AttendanceConversationRecord[]
+): Promise<AttendanceConversationWithSchedule[]> {
+  if (!conversations.length) {
+    return [];
+  }
+
+  if (!scheduleModule.isEnabled()) {
+    return conversations.map((conversation) => applyConversationScheduleSummary(conversation));
+  }
+
+  const summaries = await scheduleModule.getConversationScheduleSummaries(conversations.map((conversation) => conversation.id));
+  return conversations.map((conversation) => applyConversationScheduleSummary(conversation, summaries.get(conversation.id)));
 }
 
 function getIdemKey(req: Request): string | null {

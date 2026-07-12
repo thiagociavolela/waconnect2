@@ -130,6 +130,10 @@
             <span>Concluídos</span>
             <span class="filter-badge" id="filter-count-closed">0</span>
           </button>
+          <button type="button" class="status-pill-filter" data-status="scheduled">
+            <span>Agendados</span>
+            <span class="filter-badge" id="filter-count-scheduled">0</span>
+          </button>
           <button type="button" class="status-pill-filter" data-status="waiting_agent">
             <span>Equipe</span>
             <span class="filter-badge" id="filter-count-waiting-agent">0</span>
@@ -176,6 +180,9 @@
 
         <div class="chat-actions">
           <div class="status-chip" id="chat-status-pill">---</div>
+          <div class="chat-schedule-indicator hidden" id="chat-schedule-indicator" title="Conversa com agendamento ativo" aria-label="Conversa com agendamento ativo">
+            <i class="bi bi-clock-fill"></i>
+          </div>
           <button type="button" class="round-action secondary" id="mark-read-btn" title="Concluir atendimento" disabled>
             <i class="bi bi-check2-circle"></i>
           </button>
@@ -329,6 +336,33 @@
         </section>
 
         <section class="drawer-card">
+          <div class="drawer-card-head">
+            <h4>Agendamento</h4>
+            <span class="schedule-inline-status hidden" id="detail-schedule-status">---</span>
+          </div>
+          <div id="detail-schedule-empty" class="empty-note compact">Nenhum agendamento ativo nesta conversa.</div>
+          <div id="detail-schedule-content" class="hidden">
+            <div class="meta-line">
+              <span>Pr&oacute;ximo envio</span>
+              <strong id="detail-schedule-at">---</strong>
+            </div>
+            <div class="meta-line">
+              <span>Agendamentos ativos</span>
+              <strong id="detail-schedule-count">0</strong>
+            </div>
+            <div class="meta-block">
+              <span>Mensagem atual</span>
+              <div id="detail-schedule-message" class="message-snippet">---</div>
+            </div>
+            <label class="field-label">Alterar data e hor&aacute;rio</label>
+            <input class="soft-input" id="detail-schedule-edit-at" type="datetime-local" lang="pt-BR" disabled>
+            <label class="field-label">Alterar mensagem</label>
+            <textarea class="soft-textarea" id="detail-schedule-edit-message" rows="4" placeholder="Digite a mensagem agendada..." disabled></textarea>
+            <button type="button" class="primary-btn full" id="save-schedule-btn" disabled>Salvar agendamento</button>
+          </div>
+        </section>
+
+        <section class="drawer-card">
           <div class="notes-head">
             <div>
               <h4>Notas internas</h4>
@@ -385,7 +419,7 @@
         <div class="modal-body">
           <div class="mb-3">
             <label class="form-label">Data e horário</label>
-            <input class="soft-input" id="schedule-message-at" type="datetime-local">
+            <input class="soft-input" id="schedule-message-at" type="datetime-local" lang="pt-BR">
             <div class="form-text text-light-emphasis mt-2">Horário oficial: America/Sao_Paulo (-03:00).</div>
           </div>
           <div class="mb-3">
@@ -472,6 +506,7 @@
     const chatContactName = document.getElementById('chat-contact-name');
     const chatContactSubtitle = document.getElementById('chat-contact-subtitle');
     const chatStatusPill = document.getElementById('chat-status-pill');
+    const chatScheduleIndicator = document.getElementById('chat-schedule-indicator');
     const contactAvatar = document.getElementById('contact-avatar');
     const replyAgentName = document.getElementById('reply-agent-name');
     const replyMessage = document.getElementById('reply-message');
@@ -507,6 +542,15 @@
     const conversationStatusSelect = document.getElementById('conversation-status-select');
     const conversationTagsInput = document.getElementById('conversation-tags-input');
     const detailTagsPreview = document.getElementById('detail-tags-preview');
+    const detailScheduleStatus = document.getElementById('detail-schedule-status');
+    const detailScheduleEmpty = document.getElementById('detail-schedule-empty');
+    const detailScheduleContent = document.getElementById('detail-schedule-content');
+    const detailScheduleAt = document.getElementById('detail-schedule-at');
+    const detailScheduleCount = document.getElementById('detail-schedule-count');
+    const detailScheduleMessage = document.getElementById('detail-schedule-message');
+    const detailScheduleEditAt = document.getElementById('detail-schedule-edit-at');
+    const detailScheduleEditMessage = document.getElementById('detail-schedule-edit-message');
+    const saveScheduleBtn = document.getElementById('save-schedule-btn');
     const saveAssignmentBtn = document.getElementById('save-assignment-btn');
     const saveTagsBtn = document.getElementById('save-tags-btn');
     const notesList = document.getElementById('notes-list');
@@ -625,6 +669,16 @@
       if (status === 'open') return 'Aberto';
       if (status === 'waiting_agent') return 'Equipe';
       if (status === 'closed') return 'Concluído';
+      return status || '---';
+    }
+
+    function scheduleStatusLabel(status) {
+      if (status === 'pending') return 'Agendado';
+      if (status === 'paused') return 'Pausado';
+      if (status === 'processing') return 'Processando';
+      if (status === 'sent') return 'Enviado';
+      if (status === 'failed') return 'Falhou';
+      if (status === 'cancelled') return 'Cancelado';
       return status || '---';
     }
 
@@ -775,6 +829,10 @@
     function applyStatusConversationFilter(items) {
       if (!state.filterStatus) {
         return items;
+      }
+
+      if (state.filterStatus === 'scheduled') {
+        return items.filter((item) => item.hasActiveSchedule);
       }
 
       return items.filter((item) => item.status === state.filterStatus);
@@ -989,6 +1047,7 @@
         new: baseItems.filter((item) => item.status === 'new').length,
         open: baseItems.filter((item) => item.status === 'open').length,
         closed: baseItems.filter((item) => item.status === 'closed').length,
+        scheduled: baseItems.filter((item) => item.hasActiveSchedule).length,
         waitingAgent: baseItems.filter((item) => item.status === 'waiting_agent').length
       };
 
@@ -996,6 +1055,7 @@
       document.getElementById('filter-count-new').textContent = String(counts.new);
       document.getElementById('filter-count-open').textContent = String(counts.open);
       document.getElementById('filter-count-closed').textContent = String(counts.closed);
+      document.getElementById('filter-count-scheduled').textContent = String(counts.scheduled);
       document.getElementById('filter-count-waiting-agent').textContent = String(counts.waitingAgent);
     }
 
@@ -1012,6 +1072,9 @@
       assignedAgentInput.disabled = !enabled;
       conversationStatusSelect.disabled = !enabled;
       conversationTagsInput.disabled = !enabled;
+      detailScheduleEditAt.disabled = !enabled || !state.activeConversation?.hasActiveSchedule;
+      detailScheduleEditMessage.disabled = !enabled || !state.activeConversation?.hasActiveSchedule;
+      saveScheduleBtn.disabled = !enabled || !state.activeConversation?.hasActiveSchedule;
       saveAssignmentBtn.disabled = !enabled;
       saveTagsBtn.disabled = !enabled;
       noteAuthorInput.disabled = !enabled;
@@ -1194,7 +1257,10 @@
           <div class="conversation-content">
             <div class="conversation-head">
               <strong>${escapeHtml(conversationDisplayName(item))}</strong>
-              <span>${escapeHtml(formatDateTime(item.lastMessageAt || item.updatedAt))}</span>
+              <div class="conversation-head-meta">
+                ${item.hasActiveSchedule ? `<span class="conversation-schedule-flag" title="Agendamento ativo em ${escapeHtml(formatDateTime(item.nextScheduleAt || item.updatedAt))}" aria-label="Agendamento ativo"><i class="bi bi-clock-fill"></i></span>` : ''}
+                <span>${escapeHtml(formatDateTime(item.lastMessageAt || item.updatedAt))}</span>
+              </div>
             </div>
             <div class="conversation-preview-row">
               <div class="conversation-preview">${escapeHtml(item.lastMessageText || 'Sem mensagens ainda')}</div>
@@ -1202,7 +1268,7 @@
             </div>
             <div class="conversation-foot">
               <span class="status-badge ${item.status}">${escapeHtml(statusLabel(item.status))}</span>
-              <span class="assigned-label">${escapeHtml(item.assignedAgent || 'Sem atendente')}</span>
+              <span class="assigned-label">${escapeHtml(item.assignedAgent || '')}</span>
             </div>
           </div>
         </article>
@@ -1770,6 +1836,38 @@
       renderDetails();
     }
 
+    function renderScheduleDetails(item) {
+      if (!item?.hasActiveSchedule) {
+        chatScheduleIndicator?.classList.add('hidden');
+        detailScheduleStatus?.classList.add('hidden');
+        detailScheduleStatus.textContent = '---';
+        detailScheduleEmpty?.classList.remove('hidden');
+        detailScheduleContent?.classList.add('hidden');
+        detailScheduleAt.textContent = '---';
+        detailScheduleCount.textContent = '0';
+        detailScheduleMessage.textContent = '---';
+        detailScheduleEditAt.value = '';
+        detailScheduleEditMessage.value = '';
+        return;
+      }
+
+      chatScheduleIndicator?.classList.remove('hidden');
+      chatScheduleIndicator.title = item.nextScheduleAt
+        ? `Conversa com agendamento ativo para ${formatDateTime(item.nextScheduleAt)}`
+        : 'Conversa com agendamento ativo';
+      chatScheduleIndicator.setAttribute('aria-label', chatScheduleIndicator.title);
+
+      detailScheduleStatus.textContent = scheduleStatusLabel(item.nextScheduleStatus);
+      detailScheduleStatus.className = `schedule-inline-status ${item.nextScheduleStatus || ''}`;
+      detailScheduleEmpty.classList.add('hidden');
+      detailScheduleContent.classList.remove('hidden');
+      detailScheduleAt.textContent = formatDateTime(item.nextScheduleAt);
+      detailScheduleCount.textContent = String(item.activeScheduleCount || 0);
+      detailScheduleMessage.textContent = item.nextScheduleMessage || '[Sem mensagem]';
+      detailScheduleEditAt.value = item.nextScheduleAt ? formatDateTimeLocalInput(new Date(item.nextScheduleAt)) : '';
+      detailScheduleEditMessage.value = item.nextScheduleMessage || '';
+    }
+
     function renderNotes() {
       if (!state.activeConversation) {
         notesList.innerHTML = '<div class="empty-note">Selecione uma conversa para visualizar as notas.</div>';
@@ -1804,6 +1902,7 @@
         chatContactSubtitle.textContent = 'Sem conversa ativa no momento.';
         chatStatusPill.textContent = '---';
         chatStatusPill.className = 'status-chip';
+        chatScheduleIndicator?.classList.add('hidden');
         contactAvatar.className = 'contact-avatar';
         contactAvatar.innerHTML = 'C';
         detailContactName.textContent = '---';
@@ -1821,6 +1920,7 @@
         removePendingComposerMedia();
         noteAuthorInput.value = '';
         noteText.value = '';
+        renderScheduleDetails(null);
         setInteractionEnabled(false);
         renderNotes();
         return;
@@ -1850,6 +1950,7 @@
       conversationTagsInput.value = (item.tags || []).join(', ');
       replyAgentName.value = item.assignedAgent || replyAgentName.value || '';
       noteAuthorInput.value = item.assignedAgent || noteAuthorInput.value || '';
+      renderScheduleDetails(item);
       setInteractionEnabled(state.attendanceEnabled);
       renderNotes();
     }
@@ -2378,7 +2479,56 @@
         }
 
         scheduleMessageModal.hide();
+        await reloadConversationArea();
         alert(`Mensagem agendada para ${formatDateTime(payload?.scheduledAt || scheduledAt)}.`);
+      } finally {
+        hideLoader();
+      }
+    }
+
+    async function saveConversationSchedule() {
+      if (!state.activeConversationId || !state.activeConversation?.nextScheduleId || !state.activeConversation?.hasActiveSchedule) {
+        alert('Nenhum agendamento ativo disponível para edição.');
+        return;
+      }
+
+      const message = detailScheduleEditMessage.value.trim();
+      const scheduledAt = detailScheduleEditAt.value.trim();
+
+      if (!message) {
+        alert('Digite a mensagem do agendamento.');
+        return;
+      }
+
+      if (!scheduledAt) {
+        alert('Informe a nova data e horário do agendamento.');
+        return;
+      }
+
+      showLoader();
+      try {
+        const response = await fetch(`/api/attendance/conversations/${encodeURIComponent(state.activeConversationId)}/schedules/${encodeURIComponent(state.activeConversation.nextScheduleId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message,
+            scheduledAt: appLocalInputToIso(scheduledAt),
+            status: state.activeConversation.nextScheduleStatus === 'paused' ? 'paused' : 'pending'
+          })
+        });
+
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+
+        const payload = await readJsonSafe(response);
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Falha ao editar agendamento.');
+        }
+
+        await reloadConversationArea();
+        alert(`Agendamento atualizado para ${formatDateTime(payload?.scheduledAt || scheduledAt)}.`);
       } finally {
         hideLoader();
       }
@@ -2560,7 +2710,7 @@
       state.eventSource = source;
 
       source.onopen = () => {
-        setRealtimeState(true, 'Tempo real ativo');
+        setRealtimeState(true, 'WhatsApp Ativo');
       };
 
       source.onmessage = (event) => {
@@ -2776,6 +2926,10 @@
 
     saveAssignmentBtn.addEventListener('click', async () => {
       await saveConversationMeta();
+    });
+
+    saveScheduleBtn.addEventListener('click', async () => {
+      await saveConversationSchedule();
     });
 
     saveTagsBtn.addEventListener('click', async () => {

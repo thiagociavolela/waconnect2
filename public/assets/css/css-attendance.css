@@ -591,6 +591,13 @@ a {
   min-width: 0;
 }
 
+.conversation-head-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .conversation-head strong {
   font-size: 14px;
   line-height: 1.15;
@@ -610,6 +617,24 @@ a {
   padding-top: 0;
   color: #92abb8;
   font-variant-numeric: tabular-nums;
+}
+
+.conversation-schedule-flag,
+.chat-schedule-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f6c453;
+  background: rgba(246, 196, 83, 0.12);
+  border: 1px solid rgba(246, 196, 83, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.conversation-schedule-flag {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  font-size: 9px;
 }
 
 .conversation-head span,
@@ -699,6 +724,13 @@ a {
 .status-chip.new {
   background: #23323f;
   color: #93c5fd;
+}
+
+.chat-schedule-indicator {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  font-size: 13px;
 }
 
 .unread-badge {
@@ -1484,9 +1516,21 @@ emoji-picker {
   padding: 16px;
 }
 
+.drawer-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
 .drawer-card h4 {
   margin: 0 0 14px;
   font-size: 18px;
+}
+
+.drawer-card-head h4 {
+  margin: 0;
 }
 
 .meta-line,
@@ -1505,6 +1549,39 @@ emoji-picker {
 
 .message-snippet {
   line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.empty-note.compact {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.schedule-inline-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(246, 196, 83, 0.12);
+  color: #f6c453;
+  border: 1px solid rgba(246, 196, 83, 0.18);
+}
+
+.schedule-inline-status.paused {
+  background: rgba(102, 153, 255, 0.14);
+  color: #9bb9ff;
+  border-color: rgba(102, 153, 255, 0.2);
+}
+
+.schedule-inline-status.processing {
+  background: rgba(0, 168, 132, 0.14);
+  color: #7be0c9;
+  border-color: rgba(0, 168, 132, 0.2);
 }
 
 .field-label {
