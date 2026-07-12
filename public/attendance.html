@@ -66,6 +66,10 @@
       </div>
 
       <div class="toolbar-section">
+        <button type="button" class="toolbar-icon-btn" id="toolbar-contacts-btn" title="Lista de contatos" aria-label="Lista de contatos">
+          <i class="bi bi-people-fill"></i>
+        </button>
+
         <button type="button" class="toolbar-icon-btn accent" id="toolbar-new-conversation-btn" title="Novo atendimento" aria-label="Novo atendimento">
           <i class="bi bi-plus-lg"></i>
         </button>
@@ -409,6 +413,41 @@
     </div>
   </div>
 
+  <div class="modal fade" id="contactsDirectoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+      <div class="modal-content soft-modal contacts-directory-modal">
+        <div class="modal-header">
+          <div class="contacts-directory-title">
+            <span class="contacts-directory-kicker">Atendimento</span>
+            <h5 class="modal-title mb-0">Contatos das conversas</h5>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="contacts-directory-hero">
+            <div>
+              <div class="contacts-directory-heading">Acesso rápido aos contatos</div>
+              <div class="contacts-directory-text">Abra a conversa ou dispare um novo agendamento direto da base atual do atendimento.</div>
+            </div>
+            <div class="contacts-directory-stat">
+              <span class="contacts-directory-stat-value" id="contacts-directory-total">0</span>
+              <span class="contacts-directory-stat-label">contatos</span>
+            </div>
+          </div>
+
+          <div class="search-box contacts-directory-search">
+            <i class="bi bi-search"></i>
+            <input id="contacts-directory-search" type="text" placeholder="Buscar por nome ou número">
+          </div>
+
+          <div class="contacts-directory-list" id="contacts-directory-list">
+            <div class="empty-note">Carregando contatos...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="scheduleMessageModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content soft-modal">
@@ -496,6 +535,7 @@
     const toolbarRealtimeBtn = document.getElementById('toolbar-realtime-btn');
     const toolbarRealtimeDot = document.getElementById('toolbar-realtime-dot');
     const toolbarAudioBtn = document.getElementById('toolbar-audio-btn');
+    const toolbarContactsBtn = document.getElementById('toolbar-contacts-btn');
     const notificationAudio = document.getElementById('notification-audio');
     const conversationSearch = document.getElementById('conversation-search');
     const conversationCounter = document.getElementById('conversation-counter');
@@ -569,6 +609,10 @@
     const newConversationNumber = document.getElementById('new-conversation-number');
     const newConversationName = document.getElementById('new-conversation-name');
     const newConversationModal = new bootstrap.Modal(document.getElementById('newConversationModal'));
+    const contactsDirectorySearch = document.getElementById('contacts-directory-search');
+    const contactsDirectoryList = document.getElementById('contacts-directory-list');
+    const contactsDirectoryTotal = document.getElementById('contacts-directory-total');
+    const contactsDirectoryModal = new bootstrap.Modal(document.getElementById('contactsDirectoryModal'));
     const scheduleMessageAt = document.getElementById('schedule-message-at');
     const scheduleMessageText = document.getElementById('schedule-message-text');
     const scheduleCreatedBy = document.getElementById('schedule-created-by');
@@ -616,7 +660,8 @@
       audioUnlocked: false,
       audioElementUnlocked: false,
       lastNotificationSignature: null,
-      lastNotificationPlayedAt: 0
+      lastNotificationPlayedAt: 0,
+      contactsDirectorySearch: ''
     };
 
     function showLoader() {
@@ -824,6 +869,91 @@
 
         return haystack.includes(search);
       });
+    }
+
+    function getContactsDirectoryItems() {
+      const search = String(state.contactsDirectorySearch || '').trim().toLowerCase();
+      const items = [...(state.allConversations || [])]
+        .sort((a, b) => {
+          const aName = conversationDisplayName(a).toLowerCase();
+          const bName = conversationDisplayName(b).toLowerCase();
+          return aName.localeCompare(bName, 'pt-BR');
+        });
+
+      if (!search) {
+        return items;
+      }
+
+      return items.filter((item) => {
+        const haystack = [
+          item.contactName,
+          item.contactNumber
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return haystack.includes(search);
+      });
+    }
+
+    function renderContactsDirectory() {
+      if (!contactsDirectoryList || !contactsDirectoryTotal) {
+        return;
+      }
+
+      const items = getContactsDirectoryItems();
+      contactsDirectoryTotal.textContent = String((state.allConversations || []).length);
+
+      if (!items.length) {
+        contactsDirectoryList.innerHTML = '<div class="empty-note">Nenhum contato encontrado com esse filtro.</div>';
+        return;
+      }
+
+      contactsDirectoryList.innerHTML = items.map((item, index) => `
+        <article class="contact-directory-card" style="--contact-delay:${Math.min(index, 12) * 28}ms">
+          <div class="contact-directory-avatar-wrap">
+            ${renderAvatarMarkup(item, 'contact-directory-avatar', initialsFromName(conversationDisplayName(item)))}
+          </div>
+          <div class="contact-directory-main">
+            <div class="contact-directory-name-row">
+              <strong>${escapeHtml(conversationDisplayName(item))}</strong>
+              ${item.hasActiveSchedule ? '<span class="contact-directory-schedule-pill"><i class="bi bi-clock-fill"></i> Agendado</span>' : ''}
+            </div>
+            <div class="contact-directory-number">${escapeHtml(item.contactNumber || '---')}</div>
+            <div class="contact-directory-meta">
+              <span class="contact-directory-status ${escapeHtml(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
+              ${item.assignedAgent ? `<span>${escapeHtml(item.assignedAgent)}</span>` : '<span>Sem atendente</span>'}
+            </div>
+          </div>
+          <div class="contact-directory-actions">
+            <button type="button" class="secondary-btn contact-directory-btn" data-contact-action="schedule" data-conversation-id="${escapeHtml(item.id)}">
+              <i class="bi bi-alarm"></i>
+              <span>Agendar</span>
+            </button>
+            <button type="button" class="primary-btn contact-directory-btn" data-contact-action="open" data-conversation-id="${escapeHtml(item.id)}">
+              <i class="bi bi-box-arrow-in-right"></i>
+              <span>Abrir conversa</span>
+            </button>
+          </div>
+        </article>
+      `).join('');
+    }
+
+    async function openContactsDirectory() {
+      if (!state.attendanceEnabled) {
+        alert('Ative o módulo de atendimento para acessar os contatos.');
+        return;
+      }
+
+      state.contactsDirectorySearch = '';
+      if (contactsDirectorySearch) {
+        contactsDirectorySearch.value = '';
+      }
+
+      await loadConversations();
+      renderContactsDirectory();
+      contactsDirectoryModal.show();
     }
 
     function applyStatusConversationFilter(items) {
@@ -2034,6 +2164,7 @@
       state.allConversations = nextConversations;
       state.conversationSnapshotReady = true;
       refreshConversationView();
+      renderContactsDirectory();
       if (notificationSignature) {
         playIncomingMessageNotification(notificationSignature);
       }
@@ -2785,6 +2916,10 @@
       newConversationBtn.click();
     });
 
+    toolbarContactsBtn?.addEventListener('click', async () => {
+      await openContactsDirectory();
+    });
+
     toolbarAudioBtn?.addEventListener('click', async () => {
       setAudioNotificationsEnabled(!state.audioNotificationsEnabled);
       if (state.audioNotificationsEnabled) {
@@ -2794,6 +2929,36 @@
 
     createConversationBtn.addEventListener('click', async () => {
       await createConversation();
+    });
+
+    contactsDirectorySearch?.addEventListener('input', () => {
+      state.contactsDirectorySearch = contactsDirectorySearch.value || '';
+      renderContactsDirectory();
+    });
+
+    contactsDirectoryList?.addEventListener('click', async (event) => {
+      const actionTrigger = event.target.closest('[data-contact-action]');
+      if (!actionTrigger) {
+        return;
+      }
+
+      const action = actionTrigger.getAttribute('data-contact-action') || '';
+      const conversationId = actionTrigger.getAttribute('data-conversation-id') || '';
+      if (!conversationId) {
+        return;
+      }
+
+      contactsDirectoryModal.hide();
+
+      if (action === 'open') {
+        await openConversation(conversationId, false);
+        return;
+      }
+
+      if (action === 'schedule') {
+        await openConversation(conversationId, false);
+        openScheduleComposer();
+      }
     });
 
     attachFileBtn.addEventListener('click', () => {
@@ -2990,6 +3155,17 @@
     document.getElementById('imagePreviewModal').addEventListener('hidden.bs.modal', () => {
       imagePreviewFull.src = '';
       imagePreviewDownload.href = '#';
+    });
+
+    document.getElementById('contactsDirectoryModal').addEventListener('shown.bs.modal', () => {
+      contactsDirectorySearch?.focus();
+    });
+
+    document.getElementById('contactsDirectoryModal').addEventListener('hidden.bs.modal', () => {
+      state.contactsDirectorySearch = '';
+      if (contactsDirectorySearch) {
+        contactsDirectorySearch.value = '';
+      }
     });
 
     document.getElementById('conversationOpenConfirmModal').addEventListener('hidden.bs.modal', () => {
